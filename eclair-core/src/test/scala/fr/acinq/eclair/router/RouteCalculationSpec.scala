@@ -89,7 +89,7 @@ class RouteCalculationSpec extends FunSuite {
     val Success(route) = Router.findRoute(graph, a, d, amountMsat, numRoutes = 1)
 
     assert(hops2Ids(route) === 4 :: 5 :: 6 :: Nil)
-    assert(Graph.pathCost(hops2Edges(route), amountMsat) === expectedCost)
+    assert(Graph.pathCost(hops2Edges(route), amountMsat).costMsat === expectedCost)
 
     // now channel 5 could route the amount (10000) but not the amount + fees (10007)
     val (desc, update) = makeUpdate(5L, e, f, feeBaseMsat = 1, feeProportionalMillionth = 400, minHtlcMsat = 0, maxHtlcMsat = Some(10005))
@@ -213,7 +213,7 @@ class RouteCalculationSpec extends FunSuite {
 
     val g = makeGraph(updates)
 
-    val route = Router.findRoute(g, a, e, DEFAULT_AMOUNT_MSAT, numRoutes = 1)
+    val route = Router.findRoute(g, a, e, DEFAULT_AMOUNT_MSAT, numRoutes = 1, optimization = COST_OPTIMIZED)
     assert(route.map(hops2Ids) === Success(1 :: 2 :: 3 :: 4 :: Nil))
   }
 
@@ -650,8 +650,8 @@ class RouteCalculationSpec extends FunSuite {
         val allowedSpread = DEFAULT_AMOUNT_MSAT + (DEFAULT_AMOUNT_MSAT * Router.DEFAULT_ALLOWED_SPREAD)
 
         // over the three routes we could only get the 2 cheapest because the third is too expensive (over 10% of the cheapest)
-        assert(routeCost == 10000005 || routeCost == 10000006)
-        assert(routeCost < allowedSpread)
+        assert(routeCost.costMsat == 10000005 || routeCost.costMsat == 10000006)
+        assert(routeCost.costMsat < allowedSpread)
     }
   }
   test("Use weight ratios to when computing the edge weight") {
@@ -672,27 +672,15 @@ class RouteCalculationSpec extends FunSuite {
 
     val g = makeGraph(updates)
 
-    val Success(routeFeeOptimized) = Router.findRoute(g, a, d, DEFAULT_AMOUNT_MSAT, numRoutes = 1, wr = WeightRatios(
-      costFactor = 0.98,
-      cltvDeltaFactor = 0.01,
-      scoreFactor = 0.001
-    ))
+    val Success(routeFeeOptimized) = Router.findRoute(g, a, d, DEFAULT_AMOUNT_MSAT, numRoutes = 1, optimization = COST_OPTIMIZED)
 
     assert(hops2ShortChannelIds(routeFeeOptimized) === "1000x0x1" :: "1000x0x2" :: "1000x0x3" :: Nil)
 
-    val Success(routeCltvOptimized) = Router.findRoute(g, a, d, DEFAULT_AMOUNT_MSAT, numRoutes = 1, wr = WeightRatios(
-      costFactor = 0.001,
-      cltvDeltaFactor = 0.98,
-      scoreFactor = 0.001
-    ))
+    val Success(routeCltvOptimized) = Router.findRoute(g, a, d, DEFAULT_AMOUNT_MSAT, numRoutes = 1, optimization = CLTV_OPTIMIZED)
 
     assert(hops2ShortChannelIds(routeCltvOptimized) === "1000x0x4" :: "1000x0x5" :: "1000x0x6" :: Nil)
 
-    val Success(routeScoreOptimized) = Router.findRoute(g, a, d, DEFAULT_AMOUNT_MSAT, numRoutes = 1, wr = WeightRatios(
-      costFactor = 0.001,
-      cltvDeltaFactor = 0.001,
-      scoreFactor = 0.98
-    ))
+    val Success(routeScoreOptimized) = Router.findRoute(g, a, d, DEFAULT_AMOUNT_MSAT, numRoutes = 1, optimization = SCORE_OPTIMIZED)
 
     assert(hops2ShortChannelIds(routeScoreOptimized) === "1000x0x4" :: "876x0x7" :: "1000x0x3" :: Nil)
   }
@@ -709,11 +697,7 @@ class RouteCalculationSpec extends FunSuite {
     ).toMap)
 
 
-    val Success(routeScoreOptimized) = Router.findRoute(g, a, d, DEFAULT_AMOUNT_MSAT, numRoutes = 1, wr = WeightRatios(
-      costFactor = 0.33,
-      cltvDeltaFactor = 0.33,
-      scoreFactor = 0.33
-    ))
+    val Success(routeScoreOptimized) = Router.findRoute(g, a, d, DEFAULT_AMOUNT_MSAT, numRoutes = 1, optimization = SCORE_OPTIMIZED)
 
     assert(hops2ShortChannelIds(routeScoreOptimized) === "20x0x1" :: "10x0x2" :: "20x0x3" :: Nil)
   }
@@ -730,11 +714,7 @@ class RouteCalculationSpec extends FunSuite {
     ).toMap)
 
 
-    val Success(routeScoreOptimized) = Router.findRoute(g, a, d, DEFAULT_AMOUNT_MSAT, numRoutes = 1, wr = WeightRatios(
-      costFactor = 0.33,
-      cltvDeltaFactor = 0.33,
-      scoreFactor = 0.33
-    ))
+    val Success(routeScoreOptimized) = Router.findRoute(g, a, d, DEFAULT_AMOUNT_MSAT, numRoutes = 1, optimization = CLTV_OPTIMIZED)
 
     assert(hops2ShortChannelIds(routeScoreOptimized) === "10x0x1" :: "10x0x2" :: "10x0x3" :: Nil)
   }

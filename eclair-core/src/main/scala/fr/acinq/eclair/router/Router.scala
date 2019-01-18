@@ -40,6 +40,11 @@ import scala.util.{Random, Try}
 
 // @formatter:off
 
+sealed trait RouteOptimization
+object COST_OPTIMIZED extends RouteOptimization
+object CLTV_OPTIMIZED extends RouteOptimization
+object SCORE_OPTIMIZED extends RouteOptimization
+
 case class ChannelDesc(shortChannelId: ShortChannelId, a: PublicKey, b: PublicKey)
 case class Hop(nodeId: PublicKey, nextNodeId: PublicKey, lastUpdate: ChannelUpdate)
 case class RouteRequest(source: PublicKey, target: PublicKey, amountMsat: Long, assistedRoutes: Seq[Seq[ExtraHop]] = Nil, ignoreNodes: Set[PublicKey] = Set.empty, ignoreChannels: Set[ChannelDesc] = Set.empty, wr_opt: Option[WeightRatios] = None)
@@ -378,7 +383,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
       log.info(s"finding a route $start->$end with assistedChannels={} ignoreNodes={} ignoreChannels={} excludedChannels={}", assistedUpdates.keys.mkString(","), ignoreNodes.map(_.toBin).mkString(","), ignoreChannels.mkString(","), d.excludedChannels.mkString(","))
       val extraEdges = assistedUpdates.map { case (c, u) => GraphEdge(c, u) }.toSet
       // we ask the router to make a random selection among the three best routes, numRoutes = 3
-      findRoute(d.graph, start, end, amount, numRoutes = DEFAULT_ROUTES_COUNT, extraEdges = extraEdges, ignoredEdges = ignoredUpdates.toSet, wr_opt.getOrElse(DEFAULT_WEIGHT_RATIOS))
+      findRoute(d.graph, start, end, amount, numRoutes = DEFAULT_ROUTES_COUNT, extraEdges = extraEdges, ignoredEdges = ignoredUpdates.toSet, COST_OPTIMIZED)
         .map(r => sender ! RouteResponse(r, ignoreNodes, ignoreChannels))
         .recover { case t => sender ! Status.Failure(t) }
       stay
@@ -784,8 +789,8 @@ object Router {
   // routes exceeding this difference won't be considered as a valid result
   val DEFAULT_ALLOWED_SPREAD = 0.1D
 
-  //
-  val DEFAULT_WEIGHT_RATIOS = WeightRatios(costFactor = 1D, cltvDeltaFactor = 0, scoreFactor = 0)
+  // The default ratio used to compute the weight of the edges when searching for a route
+  val DEFAULT_WEIGHT_RATIOS = WeightRatios(costFactor = 0.33D, cltvDeltaFactor = 0.33D, scoreFactor = 0.33D)
 
   /**
     * Find a route in the graph between localNodeId and targetNodeId, returns the route.
@@ -802,20 +807,30 @@ object Router {
     * @param ignoredEdges a set of extra edges we want to IGNORE during the search
     * @return the computed route to the destination @targetNodeId
     */
-  def findRoute(g: DirectedGraph, localNodeId: PublicKey, targetNodeId: PublicKey, amountMsat: Long, numRoutes: Int, extraEdges: Set[GraphEdge] = Set.empty, ignoredEdges: Set[ChannelDesc] = Set.empty, wr: WeightRatios = DEFAULT_WEIGHT_RATIOS): Try[Seq[Hop]] = Try {
+  def findRoute(g: DirectedGraph, localNodeId: PublicKey, targetNodeId: PublicKey, amountMsat: Long, numRoutes: Int, extraEdges: Set[GraphEdge] = Set.empty, ignoredEdges: Set[ChannelDesc] = Set.empty, optimization: RouteOptimization = COST_OPTIMIZED): Try[Seq[Hop]] = Try {
     if (localNodeId == targetNodeId) throw CannotRouteToSelf
 
-    val foundRoutes = Graph.yenKshortestPaths(g, localNodeId, targetNodeId, amountMsat, ignoredEdges, extraEdges, numRoutes, wr).toList match {
+    val weightRatio = optimization match {
+      case COST_OPTIMIZED => WeightRatios(1D, 0, 0)
+      case CLTV_OPTIMIZED => WeightRatios(0, 1D, 0)
+      case SCORE_OPTIMIZED => WeightRatios(0, 0, 1D)
+    }
+
+    val foundRoutes = Graph.yenKshortestPaths(g, localNodeId, targetNodeId, amountMsat, ignoredEdges, extraEdges, numRoutes, weightRatio).toList match {
       case Nil => throw RouteNotFound
       case route :: Nil  if route.path.isEmpty => throw RouteNotFound
       case foundRoutes => foundRoutes
     }
 
     // minimum cost
-    val minimumCost = foundRoutes.head.weight
+    val minimumCost = foundRoutes.head.weight.costMsat
 
     // routes paying at most minimumCost + 10%
-    val eligibleRoutes = foundRoutes.filter(_.weight  <= (minimumCost + minimumCost * DEFAULT_ALLOWED_SPREAD).round)
-    Random.shuffle(eligibleRoutes).head.path.map(graphEdgeToHop)
+    val eligibleRoutes = foundRoutes.filter(_.weight.costMsat  <= (minimumCost + minimumCost * DEFAULT_ALLOWED_SPREAD).round)
+
+    val selectedRoute = Random.shuffle(eligibleRoutes).head
+    //log.debug(s"Route: size=${selectedRoute.path.size} total_fees=${amountMsat}")
+
+    selectedRoute.path.map(graphEdgeToHop)
   }
 }

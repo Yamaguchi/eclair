@@ -13,7 +13,10 @@ object Graph {
   case class WeightedNode(key: PublicKey, compoundWeight: CompoundWeight) {
     def weight(wr: WeightRatios): Double = compoundWeight.totalWeight(wr)
   }
-
+  case class WeightedPath(path: Seq[GraphEdge], weight: CompoundWeight)
+  case class WeightRatios(costFactor: Double, cltvDeltaFactor: Double, scoreFactor: Double) {
+    require(0 < costFactor + cltvDeltaFactor + scoreFactor && costFactor + cltvDeltaFactor + scoreFactor <= 1D, "Total weight ratio must be between 0 and 1")
+  }
   case class CompoundWeight(costMsat: Long, cltvDelta: Long, score: Long) {
 
     def totalWeight(wr: WeightRatios): Double = {
@@ -28,11 +31,6 @@ object Graph {
     }
   }
 
-  case class WeightRatios(costFactor: Double, cltvDeltaFactor: Double, scoreFactor: Double) {
-    require(0 < costFactor + cltvDeltaFactor + scoreFactor && costFactor + cltvDeltaFactor + scoreFactor <= 1D, "Total weight ratio must be between 0 and 1")
-  }
-  case class WeightedPath(path: Seq[GraphEdge], weight: Long)
-
   /**
     * This comparator must be consistent with the "equals" behavior, thus for two weighted nodes with
     * the same weight we distinguish them by their public key. See https://docs.oracle.com/javase/8/docs/api/java/util/Comparator.html
@@ -45,8 +43,8 @@ object Graph {
     }
   }
 
-  implicit object PathComparator extends Ordering[WeightedPath] {
-    override def compare(x: WeightedPath, y: WeightedPath): Int = y.weight.compareTo(x.weight)
+  class PathComparator(wr: WeightRatios) extends Ordering[WeightedPath] {
+    override def compare(x: WeightedPath, y: WeightedPath): Int = y.weight.compare(x.weight, wr)
   }
   /**
     * Yen's algorithm to find the k-shortest (loopless) paths in a graph, uses dijkstra as search algo. Is guaranteed to terminate finding
@@ -64,6 +62,9 @@ object Graph {
 
     // stores the shortest paths
     val shortestPaths = new mutable.MutableList[WeightedPath]
+
+    // necessary here?
+    implicit val pc = new PathComparator(wr)
     // stores the candidates for k(K +1) shortest paths, sorted by path cost
     val candidates = new mutable.PriorityQueue[WeightedPath]
 
@@ -132,9 +133,9 @@ object Graph {
   }
 
   // Calculates the total cost of a path (amount + fees), direct channels with the source will have a cost of 0 (pay no fees)
-  def pathCost(path: Seq[GraphEdge], amountMsat: Long): Long = {
-    path.drop(1).foldRight(amountMsat) { (edge, cost) =>
-      edgeCost(edge, cost, isNeighborTarget = false)
+  def pathCost(path: Seq[GraphEdge], amountMsat: Long): CompoundWeight = {
+    path.drop(1).foldRight(CompoundWeight(amountMsat, 0, 0)) { (edge, cost) =>
+      edgeWeightCompound(edge, cost, isNeighborTarget = false)
     }
   }
 
