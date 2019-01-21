@@ -21,11 +21,11 @@ import fr.acinq.bitcoin.{BinaryData, Block, Crypto}
 import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
 import fr.acinq.eclair.router.Graph.GraphStructure.DirectedGraph.graphEdgeToHop
 import fr.acinq.eclair.router.Graph.GraphStructure.{DirectedGraph, GraphEdge}
-import fr.acinq.eclair.router.Graph.WeightRatios
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{ShortChannelId, randomKey}
 import org.scalatest.FunSuite
 import scala.util.{Failure, Success}
+import RouteOptimization._
 
 /**
   * Created by PM on 31/05/2016.

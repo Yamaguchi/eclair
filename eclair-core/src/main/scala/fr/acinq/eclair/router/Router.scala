@@ -40,14 +40,15 @@ import scala.util.{Random, Try}
 
 // @formatter:off
 
-sealed trait RouteOptimization
-object COST_OPTIMIZED extends RouteOptimization
-object CLTV_OPTIMIZED extends RouteOptimization
-object SCORE_OPTIMIZED extends RouteOptimization
+object RouteOptimization extends Enumeration{
+  val COST_OPTIMIZED = Value("COST_OPTIMIZED")
+  val CLTV_OPTIMIZED = Value("CLTV_OPTIMIZED")
+  val SCORE_OPTIMIZED = Value("SCORE_OPTIMIZED")
+}
 
 case class ChannelDesc(shortChannelId: ShortChannelId, a: PublicKey, b: PublicKey)
 case class Hop(nodeId: PublicKey, nextNodeId: PublicKey, lastUpdate: ChannelUpdate)
-case class RouteRequest(source: PublicKey, target: PublicKey, amountMsat: Long, assistedRoutes: Seq[Seq[ExtraHop]] = Nil, ignoreNodes: Set[PublicKey] = Set.empty, ignoreChannels: Set[ChannelDesc] = Set.empty, optimize: Option[RouteOptimization] = None)
+case class RouteRequest(source: PublicKey, target: PublicKey, amountMsat: Long, assistedRoutes: Seq[Seq[ExtraHop]] = Nil, ignoreNodes: Set[PublicKey] = Set.empty, ignoreChannels: Set[ChannelDesc] = Set.empty, optimize: Option[RouteOptimization.Value] = None)
 case class RouteResponse(hops: Seq[Hop], ignoreNodes: Set[PublicKey], ignoreChannels: Set[ChannelDesc]) {
   require(hops.nonEmpty, "route cannot be empty")
 }
@@ -90,7 +91,7 @@ case object TickPruneStaleChannels
 class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Promise[Unit]] = None) extends FSMDiagnosticActorLogging[State, Data] {
 
   import Router._
-
+  import RouteOptimization._
   import ExecutionContext.Implicits.global
 
   context.system.eventStream.subscribe(self, classOf[LocalChannelUpdate])
@@ -690,6 +691,8 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
 
 object Router {
 
+  import RouteOptimization._
+
   def props(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Promise[Unit]] = None) = Props(new Router(nodeParams, watcher, initialized))
 
   def toFakeUpdate(extraHop: ExtraHop): ChannelUpdate =
@@ -807,7 +810,7 @@ object Router {
     * @param ignoredEdges a set of extra edges we want to IGNORE during the search
     * @return the computed route to the destination @targetNodeId
     */
-  def findRoute(g: DirectedGraph, localNodeId: PublicKey, targetNodeId: PublicKey, amountMsat: Long, numRoutes: Int, extraEdges: Set[GraphEdge] = Set.empty, ignoredEdges: Set[ChannelDesc] = Set.empty, optimization: RouteOptimization = COST_OPTIMIZED): Try[Seq[Hop]] = Try {
+  def findRoute(g: DirectedGraph, localNodeId: PublicKey, targetNodeId: PublicKey, amountMsat: Long, numRoutes: Int, extraEdges: Set[GraphEdge] = Set.empty, ignoredEdges: Set[ChannelDesc] = Set.empty, optimization: RouteOptimization.Value = COST_OPTIMIZED): Try[Seq[Hop]] = Try {
     if (localNodeId == targetNodeId) throw CannotRouteToSelf
 
     val weightRatio = optimization match {
