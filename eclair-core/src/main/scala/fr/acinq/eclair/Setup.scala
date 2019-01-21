@@ -76,7 +76,7 @@ class Setup(datadir: File,
   val keyManager = new LocalKeyManager(seed, NodeParams.makeChainHash(chain))
   val nodeParams = NodeParams.makeNodeParams(datadir, config, keyManager)
 
-  // early checks
+  // early checks - expensive?
   DBCompatChecker.checkDBCompatibility(nodeParams)
   DBCompatChecker.checkNetworkDBCompatibility(nodeParams)
   PortChecker.checkAvailable(config.getString("server.binding-ip"), config.getInt("server.port"))

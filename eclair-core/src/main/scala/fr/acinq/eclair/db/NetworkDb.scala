@@ -57,4 +57,12 @@ trait NetworkDb {
 
   def close(): Unit
 
+  def addChannelScore(shortChannelId: ShortChannelId, payment_succeded: Long)
+
+  def listChannelScores(): Map[ShortChannelId, Long]
+
+  def increasePaymentSuccessful(shortChannelId: ShortChannelId)
+
+  //def increasePaymentSuccessful(shortChannelId: ShortChannelId)
+
 }

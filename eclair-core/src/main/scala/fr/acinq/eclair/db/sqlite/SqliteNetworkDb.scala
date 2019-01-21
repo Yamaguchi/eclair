@@ -26,6 +26,8 @@ import fr.acinq.eclair.wire.LightningMessageCodecs.{channelAnnouncementCodec, ch
 import fr.acinq.eclair.wire.{ChannelAnnouncement, ChannelUpdate, NodeAnnouncement}
 import scodec.bits.BitVector
 
+import scala.collection.mutable
+
 class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
 
   import SqliteUtils._
@@ -41,6 +43,32 @@ class SqliteNetworkDb(sqlite: Connection) extends NetworkDb {
     statement.executeUpdate("CREATE TABLE IF NOT EXISTS channel_updates (short_channel_id INTEGER NOT NULL, node_flag INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(short_channel_id, node_flag), FOREIGN KEY(short_channel_id) REFERENCES channels(short_channel_id))")
     statement.executeUpdate("CREATE INDEX IF NOT EXISTS channel_updates_idx ON channel_updates(short_channel_id)")
     statement.executeUpdate("CREATE TABLE IF NOT EXISTS pruned (short_channel_id INTEGER NOT NULL PRIMARY KEY)")
+    statement.executeUpdate("CREATE TABLE IF NOT EXISTS channel_scores (short_channel_id INTEGER NOT NULL PRIMARY KEY, successful_payments INTEGER NOT NULL, FOREIGN KEY(short_channel_id) REFERENCES channels(short_channel_id))")
+  }
+
+  override def addChannelScore(shortChannelId: ShortChannelId, payment_succeded: Long): Unit = {
+    using(sqlite.prepareStatement("INSERT OR IGNORE INTO channel_scores VALUES(?, ?)")) { statement =>
+      statement.setLong(1, shortChannelId.toLong)
+      statement.setLong(2, payment_succeded)
+      statement.executeUpdate()
+    }
+  }
+
+  override def listChannelScores(): Map[ShortChannelId, Long] = {
+    using(sqlite.createStatement()) { statement =>
+      val rs = statement.executeQuery("SELECT short_channel_id, successful_payments FROM channel_scores")
+      val m = new mutable.HashMap[ShortChannelId, Long]()
+      while(rs.next()) {
+        m += ShortChannelId(rs.getLong("short_channel_id")) -> rs.getLong("successful_payments")
+      }
+      m.toMap
+    }
+  }
+
+  override def increasePaymentSuccessful(shortChannelId: ShortChannelId): Unit = {
+    using(sqlite.prepareStatement(s"UPDATE channel_scores SET successful_payments=successful_payments+1 WHERE short_channel_id=${shortChannelId.toLong}")) { statement =>
+      statement.executeUpdate()
+    }
   }
 
   override def addNode(n: NodeAnnouncement): Unit = {

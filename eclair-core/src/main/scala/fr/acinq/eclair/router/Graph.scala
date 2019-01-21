@@ -318,7 +318,7 @@ object Graph {
       */
     case class GraphEdge(desc: ChannelDesc, update: ChannelUpdate)
 
-    case class DirectedGraph(private val vertices: Map[PublicKey, List[GraphEdge]]) {
+    case class DirectedGraph(private val vertices: Map[PublicKey, List[GraphEdge]], private val scores: Map[ShortChannelId, Long]) {
 
       def addEdge(d: ChannelDesc, u: ChannelUpdate): DirectedGraph = addEdge(GraphEdge(d, u))
 
@@ -342,7 +342,7 @@ object Graph {
           removeEdge(edge.desc).addEdge(edge) // the recursive call will have the original params
         } else {
           val withVertices = addVertex(vertexIn).addVertex(vertexOut)
-          DirectedGraph(withVertices.vertices.updated(vertexOut, edge +: withVertices.vertices(vertexOut)))
+          this.copy(vertices = withVertices.vertices.updated(vertexOut, edge +: withVertices.vertices(vertexOut)))
         }
       }
 
@@ -355,7 +355,7 @@ object Graph {
         */
       def removeEdge(desc: ChannelDesc): DirectedGraph = {
         containsEdge(desc) match {
-          case true => DirectedGraph(vertices.updated(desc.b, vertices(desc.b).filterNot(_.desc == desc)))
+          case true => this.copy(vertices = vertices.updated(desc.b, vertices(desc.b).filterNot(_.desc == desc)))
           case false => this
         }
       }
@@ -404,7 +404,7 @@ object Graph {
         * @return
         */
       def removeVertex(key: PublicKey): DirectedGraph = {
-        DirectedGraph(removeEdges(getIncomingEdgesOf(key).map(_.desc)).vertices - key)
+        this.copy(vertices = removeEdges(getIncomingEdgesOf(key).map(_.desc)).vertices - key)
       }
 
       /**
@@ -415,7 +415,7 @@ object Graph {
         */
       def addVertex(key: PublicKey): DirectedGraph = {
         vertices.get(key) match {
-          case None => DirectedGraph(vertices + (key -> List.empty))
+          case None => this.copy(vertices = vertices + (key -> List.empty))
           case _ => this
         }
       }
@@ -466,18 +466,18 @@ object Graph {
     object DirectedGraph {
 
       // convenience constructors
-      def apply(): DirectedGraph = new DirectedGraph(Map())
+      def apply(): DirectedGraph = new DirectedGraph(Map(), Map())
 
-      def apply(key: PublicKey): DirectedGraph = new DirectedGraph(Map(key -> List.empty))
+      def apply(key: PublicKey): DirectedGraph = new DirectedGraph(Map(key -> List.empty), Map())
 
-      def apply(edge: GraphEdge): DirectedGraph = new DirectedGraph(Map()).addEdge(edge.desc, edge.update)
+      def apply(edge: GraphEdge): DirectedGraph = new DirectedGraph(Map(), Map()).addEdge(edge.desc, edge.update)
 
       def apply(edges: Seq[GraphEdge]): DirectedGraph = {
         makeGraph(edges.map(e => e.desc -> e.update).toMap)
       }
 
       // optimized constructor
-      def makeGraph(descAndUpdates: Map[ChannelDesc, ChannelUpdate]): DirectedGraph = {
+      def makeGraph(descAndUpdates: Map[ChannelDesc, ChannelUpdate], scores: Map[ShortChannelId, Long] = Map.empty): DirectedGraph = {
 
         // initialize the map with the appropriate size to avoid resizing during the graph initialization
         val mutableMap = new {} with mutable.HashMap[PublicKey, List[GraphEdge]] {
@@ -494,7 +494,7 @@ object Graph {
           }
         }
 
-        new DirectedGraph(mutableMap.toMap)
+        new DirectedGraph(mutableMap.toMap, scores)
       }
 
       def graphEdgeToHop(graphEdge: GraphEdge): Hop = Hop(graphEdge.desc.a, graphEdge.desc.b, graphEdge.update)

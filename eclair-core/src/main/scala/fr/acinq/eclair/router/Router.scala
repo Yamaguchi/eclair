@@ -25,12 +25,14 @@ import fr.acinq.eclair.blockchain._
 import fr.acinq.eclair.channel._
 import fr.acinq.eclair.crypto.TransportHandler
 import fr.acinq.eclair.io.Peer.{ChannelClosed, InvalidSignature, NonexistingChannel, PeerRoutingMessage}
+import fr.acinq.eclair.payment.PaymentLifecycle.{PaymentFailed, PaymentSucceeded}
 import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
 import fr.acinq.eclair.router.Graph.GraphStructure.DirectedGraph.graphEdgeToHop
 import fr.acinq.eclair.router.Graph.GraphStructure.{DirectedGraph, GraphEdge}
 import fr.acinq.eclair.router.Graph.WeightRatios
 import fr.acinq.eclair.transactions.Scripts
 import fr.acinq.eclair.wire._
+
 import scala.collection.{SortedSet, mutable}
 import scala.collection.immutable.{SortedMap, TreeMap}
 import scala.compat.Platform
@@ -96,6 +98,8 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
 
   context.system.eventStream.subscribe(self, classOf[LocalChannelUpdate])
   context.system.eventStream.subscribe(self, classOf[LocalChannelDown])
+  context.system.eventStream.subscribe(self, classOf[PaymentSucceeded]) // used to track channel scores
+//  context.system.eventStream.subscribe(self, classOf[PaymentFailed])
 
   setTimer(TickBroadcast.toString, TickBroadcast, nodeParams.routerBroadcastInterval, repeat = true)
   setTimer(TickPruneStaleChannels.toString, TickPruneStaleChannels, 1 hour, repeat = true)
@@ -109,6 +113,8 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
     val channels = db.listChannels()
     val nodes = db.listNodes()
     val updates = db.listChannelUpdates()
+    val scores = db.listChannelScores()
+
     log.info("loaded from db: channels={} nodes={} updates={}", channels.size, nodes.size, updates.size)
     val initChannels = channels.keys.foldLeft(TreeMap.empty[ShortChannelId, ChannelAnnouncement]) { case (m, c) => m + (c.shortChannelId -> c) }
     val initChannelUpdates = updates.map { u =>
@@ -116,7 +122,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
       desc -> u
     }.toMap
     // this will be used to calculate routes
-    val graph = DirectedGraph.makeGraph(initChannelUpdates)
+    val graph = DirectedGraph.makeGraph(initChannelUpdates, scores)
     val initNodes = nodes.map(n => (n.nodeId -> n)).toMap
     // send events for remaining channels/nodes
     initChannels.values.foreach(c => context.system.eventStream.publish(ChannelDiscovered(c, channels(c)._2)))
@@ -533,6 +539,11 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
       }
       context.system.eventStream.publish(syncProgress(d1))
       stay using d1
+    case Event(ps: PaymentSucceeded, d) =>
+      ps.route.foreach { hop =>
+        db.increasePaymentSuccessful(hop.lastUpdate.shortChannelId)
+      }
+      stay
   }
 
   initialize()

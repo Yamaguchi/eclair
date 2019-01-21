@@ -114,4 +114,33 @@ class SqliteNetworkDbSpec extends FunSuite {
     assert(!db.isPruned(ShortChannelId(5)))
   }
 
+  test("add/remove/test channel_scores") {
+    val sqlite = inmem
+    val db = new SqliteNetworkDb(sqlite)
+
+    def sig = Crypto.encodeSignature(Crypto.sign(randomKey.toBin, randomKey)) :+ 1.toByte
+
+    // prep work - must insert channels first
+    val channel_1 = Announcements.makeChannelAnnouncement(Block.RegtestGenesisBlock.hash, ShortChannelId(1), randomKey.publicKey, randomKey.publicKey, randomKey.publicKey, randomKey.publicKey, sig, sig, sig, sig)
+    val channel_2 = Announcements.makeChannelAnnouncement(Block.RegtestGenesisBlock.hash, ShortChannelId(2), randomKey.publicKey, randomKey.publicKey, randomKey.publicKey, randomKey.publicKey, sig, sig, sig, sig)
+    val channel_3 = Announcements.makeChannelAnnouncement(Block.RegtestGenesisBlock.hash, ShortChannelId(3), randomKey.publicKey, randomKey.publicKey, randomKey.publicKey, randomKey.publicKey, sig, sig, sig, sig)
+
+    val txid_1 = randomKey.toBin
+    val capacity = Satoshi(10000)
+
+    db.addChannel(channel_1, txid_1, capacity)
+    db.addChannel(channel_2, txid_1, capacity)
+    db.addChannel(channel_3, txid_1, capacity)
+
+    db.addChannelScore(ShortChannelId(1), 0)
+    db.addChannelScore(ShortChannelId(2), 0)
+    db.addChannelScore(ShortChannelId(3), 1)
+
+    assert(db.listChannelScores().toSet == Set((ShortChannelId(1), 0), (ShortChannelId(2), 0), (ShortChannelId(3), 1)))
+
+    db.increasePaymentSuccessful(ShortChannelId(1))
+    db.increasePaymentSuccessful(ShortChannelId(3))
+    assert(db.listChannelScores().toSet == Set((ShortChannelId(1), 1), (ShortChannelId(2), 0), (ShortChannelId(3), 2)))
+  }
+
 }
