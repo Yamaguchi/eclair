@@ -227,6 +227,12 @@ class GraphSpec extends FunSuite {
     assert(g2.scoreBy(ShortChannelId(3)) === Some(300000000))
     assert(g2.scoreBy(ShortChannelId(4)) === Some(500000000))
     assert(g2.scoreBy(ShortChannelId(5)) === Some(300000000))
+
+    // this will cause the channels to lose a bit of score
+    val g3 = g2.updateSuccessFactors(Set.empty)
+    assert(g3.scoreBy(ShortChannelId(3)) === Some(323529412))
+    assert(g3.scoreBy(ShortChannelId(4)) === Some(500000000))
+    assert(g3.scoreBy(ShortChannelId(5)) === Some(323529412))
   }
 
   def edgeFromDesc(tuple: (ChannelDesc, ChannelUpdate)): GraphEdge = GraphEdge(tuple._1, tuple._2)

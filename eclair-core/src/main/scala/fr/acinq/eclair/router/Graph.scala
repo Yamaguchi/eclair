@@ -480,7 +480,12 @@ object Graph {
         this.copy(scores = scores.updated(shortChannelId, updateF(oldScore)))
       }
 
-      //
+      /**
+        * It will increase the factor of the channels in @param shortChannelIds and decrease
+        * the factor for those not in the param.
+        * @param shortChannelIds
+        * @return
+        */
       def updateSuccessFactors(shortChannelIds: Set[ShortChannelId]): DirectedGraph = {
 
         val scoresUpdated = scores.foldLeft(Map.empty[ShortChannelId, Long]){ case (acc, (id, oldFactor)) =>
