@@ -805,9 +805,6 @@ object Router {
   // routes exceeding this difference won't be considered as a valid result
   val DEFAULT_ALLOWED_SPREAD = 0.1D
 
-  // The default ratio used to compute the weight of the edges when searching for a route
-  val DEFAULT_WEIGHT_RATIOS = WeightRatios(costFactor = 0.33D, cltvDeltaFactor = 0.33D, scoreFactor = 0.33D)
-
   /**
     * Find a route in the graph between localNodeId and targetNodeId, returns the route.
     * Will perform a k-shortest path selection given the @param numRoutes and randomly select one of the result,
@@ -845,7 +842,6 @@ object Router {
     val eligibleRoutes = foundRoutes.filter(_.weight.costMsat  <= (minimumCost + minimumCost * DEFAULT_ALLOWED_SPREAD).round)
 
     val selectedRoute = Random.shuffle(eligibleRoutes).head
-    //log.debug(s"Route: size=${selectedRoute.path.size} total_fees=${amountMsat}")
 
     selectedRoute.path.map(graphEdgeToHop)
   }

@@ -87,8 +87,6 @@ trait Service extends Logging {
 
   def appKit: Kit
 
-  val routeWeightRatios: WeightRatios
-
   val socketHandler: Flow[Message, TextMessage.Strict, NotUsed]
 
   def userPassAuthenticator(credentials: Credentials): Future[Option[String]] = credentials match {

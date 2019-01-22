@@ -255,13 +255,6 @@ class Setup(datadir: File,
         logger.info(s"json-rpc api enabled on port=${config.getInt("api.port")}")
         implicit val materializer = ActorMaterializer()
         val api = new Service {
-
-          override val routeWeightRatios = WeightRatios(
-            costFactor = config.getDouble("router.weight-ratio-fees"),
-            cltvDeltaFactor= config.getDouble("router.weight-ratio-cltv"),
-            scoreFactor = config.getDouble("router.weight-ratio-score")
-          )
-
           override def scheduler = system.scheduler
 
           override val password = {
