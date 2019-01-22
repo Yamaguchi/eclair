@@ -224,9 +224,9 @@ class GraphSpec extends FunSuite {
     // bulk update a set of shortChannelIds { 3, 5 }
     val successfulIds = Set(3,5).map(ShortChannelId(_))
     val g2 = graph.updateSuccessFactors(successfulIds)
-    assert(g2.scoreBy(ShortChannelId(3)) === Some(30000))
-    assert(g2.scoreBy(ShortChannelId(4)) === Some(50000))
-    assert(g2.scoreBy(ShortChannelId(5)) === Some(30000))
+    assert(g2.scoreBy(ShortChannelId(3)) === Some(300000000))
+    assert(g2.scoreBy(ShortChannelId(4)) === Some(500000000))
+    assert(g2.scoreBy(ShortChannelId(5)) === Some(300000000))
   }
 
   def edgeFromDesc(tuple: (ChannelDesc, ChannelUpdate)): GraphEdge = GraphEdge(tuple._1, tuple._2)
