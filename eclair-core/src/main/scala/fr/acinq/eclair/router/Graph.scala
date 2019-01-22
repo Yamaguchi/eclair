@@ -70,7 +70,7 @@ object Graph {
 
     // find the shortest path, k = 0
     val shortestPath = dijkstraShortestPath(graph, sourceNode, targetNode, amountMsat, ignoredEdges, extraEdges, wr)
-    shortestPaths += WeightedPath(shortestPath, pathCost(shortestPath, amountMsat))
+    shortestPaths += WeightedPath(shortestPath, pathCost(shortestPath, amountMsat, graph))
 
     // main loop
     for(k <- 1 until pathsToFind) {
@@ -110,7 +110,7 @@ object Graph {
             }
 
             //val totalPath = concat(rootPathEdges, spurPath.toList)
-            val candidatePath = WeightedPath(totalPath, pathCost(totalPath, amountMsat))
+            val candidatePath = WeightedPath(totalPath, pathCost(totalPath, amountMsat, graph))
 
             if (!shortestPaths.contains(candidatePath) && !candidates.exists(_ == candidatePath)) {
               candidates.enqueue(candidatePath)
@@ -133,9 +133,9 @@ object Graph {
   }
 
   // Calculates the total cost of a path (amount + fees), direct channels with the source will have a cost of 0 (pay no fees)
-  def pathCost(path: Seq[GraphEdge], amountMsat: Long): CompoundWeight = {
+  def pathCost(path: Seq[GraphEdge], amountMsat: Long, graph: DirectedGraph): CompoundWeight = {
     path.drop(1).foldRight(CompoundWeight(amountMsat, 0, 0)) { (edge, cost) =>
-      edgeWeightCompound(edge, cost, isNeighborTarget = false)
+      edgeWeightCompound(edge, cost, isNeighborTarget = false, graph)
     }
   }
 
@@ -204,7 +204,7 @@ object Graph {
 
           // note: 'cost' contains the smallest known cumulative cost (amount + fees) necessary to reach 'current' so far
           // note: there is always an entry for the current in the 'cost' map
-          val newMinimumCompoundWeight = edgeWeightCompound(edge, weight.get(current.key), neighbor == sourceNode)
+          val newMinimumCompoundWeight = edgeWeightCompound(edge, weight.get(current.key), neighbor == sourceNode, g)
 
           // test for ignored edges
           if (edge.update.htlcMaximumMsat.forall(newMinimumCompoundWeight.costMsat <= _) &&
@@ -260,7 +260,11 @@ object Graph {
 
   val MAX_FUNDING_MSAT: Long = Channel.MAX_FUNDING_SATOSHIS * 1000L
 
-  private def edgeWeightCompound(edge: GraphEdge, compoundCostSoFar: CompoundWeight, isNeighborTarget: Boolean): CompoundWeight = {
+  val DEFAULT_SUCCESS_FACTOR = 500000000L
+
+  private def edgeWeightCompound(edge: GraphEdge, compoundCostSoFar: CompoundWeight, isNeighborTarget: Boolean, graph: DirectedGraph): CompoundWeight = {
+
+    val successFactor = graph.scoreBy(edge.desc.shortChannelId).getOrElse(DEFAULT_SUCCESS_FACTOR)
 
     // Every edge is weighted down by funding block height, but older blocks add less weight - scaledUp to match the capFactor
     val blockFactor = ShortChannelId.coordinates(edge.desc.shortChannelId).blockHeight * 1000
@@ -268,8 +272,8 @@ object Graph {
     // Every edge is weighted down by channel capacity, but larger channels add less weight
     val capFactor = edge.update.htlcMaximumMsat.map(htlcMax => (MAX_FUNDING_MSAT - htlcMax).abs).getOrElse(MAX_FUNDING_MSAT)
 
-    // the 'score' is an aggregate of all factors beside the feeCost and CLTV - scaledDown to match the costFactor
-    val scoreFactor = (capFactor + blockFactor) / 10000 + compoundCostSoFar.score
+    // the 'score' is an aggregate of all factors beside the feeCost and CLTV - scaled down to match the costFactor
+    val scoreFactor = (capFactor + blockFactor + successFactor) / 10000 + compoundCostSoFar.score
 
     val costFactor = edgeCost(edge, compoundCostSoFar.costMsat, isNeighborTarget)
 
@@ -341,8 +345,12 @@ object Graph {
         if (containsEdge(edge.desc)) {
           removeEdge(edge.desc).addEdge(edge) // the recursive call will have the original params
         } else {
+
           val withVertices = addVertex(vertexIn).addVertex(vertexOut)
-          this.copy(vertices = withVertices.vertices.updated(vertexOut, edge +: withVertices.vertices(vertexOut)))
+          this.copy(
+            vertices = withVertices.vertices.updated(vertexOut, edge +: withVertices.vertices(vertexOut)),
+            scores = this.scores.updated(edge.desc.shortChannelId, scores.getOrElse(edge.desc.shortChannelId, DEFAULT_SUCCESS_FACTOR))
+          )
         }
       }
 
@@ -355,7 +363,10 @@ object Graph {
         */
       def removeEdge(desc: ChannelDesc): DirectedGraph = {
         containsEdge(desc) match {
-          case true => this.copy(vertices = vertices.updated(desc.b, vertices(desc.b).filterNot(_.desc == desc)))
+          case true => this.copy(
+            vertices = vertices.updated(desc.b, vertices(desc.b).filterNot(_.desc == desc)),
+            scores = scores - desc.shortChannelId
+          )
           case false => this
         }
       }
@@ -461,6 +472,31 @@ object Graph {
           acc + s"[${vertex.toString().take(5)}]: ${adj.map("-> " + _.desc.b.toString().take(5))} \n"
         }
       }
+
+      def scoreBy(shortChannelId: ShortChannelId) = scores.get(shortChannelId)
+
+      def updateScore(shortChannelId: ShortChannelId, updateF: Long => Long) = {
+        val oldScore = scores.getOrElse(shortChannelId, DEFAULT_SUCCESS_FACTOR)
+        this.copy(scores = scores.updated(shortChannelId, updateF(oldScore)))
+      }
+
+      //
+      def updateSuccessFactors(shortChannelIds: Set[ShortChannelId]): DirectedGraph = {
+
+        val scoresUpdated = scores.foldLeft(Map.empty[ShortChannelId, Long]){ case (acc, (id, oldFactor)) =>
+          val factorUpdated = if(shortChannelIds.contains(id)) easeDown(oldFactor) else easeUp(oldFactor)
+          acc.updated(id, factorUpdated)
+        }
+        this.copy(scores = scoresUpdated)
+      }
+
+      private def ease(finalCorrection: Double => Double)(target: Long, current: Long, factor: Double) = finalCorrection(current - (target - current) / -factor).toLong
+
+      private def easeUp(current: Long) = ease(_.ceil)(DEFAULT_SUCCESS_FACTOR, current.toLong, 8.5D)
+
+      private def easeDown(current: Long) = ease(_.floor)(0L, current.toLong, 2.5D)
+
+
     }
 
     object DirectedGraph {
@@ -484,6 +520,10 @@ object Graph {
           override def initialSize: Int = descAndUpdates.size + 1
         }
 
+        val scoreMap = new {} with mutable.HashMap[ShortChannelId, Long] {
+          override def initialSize: Int = descAndUpdates.size + 1
+        }
+
         // add all the vertices and edges in one go
         descAndUpdates.foreach { case (desc, update) =>
           // create or update vertex (desc.b) and update its neighbor
@@ -492,9 +532,12 @@ object Graph {
             case None => mutableMap += desc.a -> List.empty[GraphEdge]
             case _ =>
           }
+
+          // every shortChannelId will have a score, either what it's in @param scores or DEFAULT
+          scoreMap.put(desc.shortChannelId, scores.getOrElse(desc.shortChannelId, DEFAULT_SUCCESS_FACTOR))
         }
 
-        new DirectedGraph(mutableMap.toMap, scores)
+        new DirectedGraph(mutableMap.toMap, scoreMap.toMap)
       }
 
       def graphEdgeToHop(graphEdge: GraphEdge): Hop = Hop(graphEdge.desc.a, graphEdge.desc.b, graphEdge.update)

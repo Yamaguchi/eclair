@@ -89,7 +89,7 @@ class RouteCalculationSpec extends FunSuite {
     val Success(route) = Router.findRoute(graph, a, d, amountMsat, numRoutes = 1)
 
     assert(hops2Ids(route) === 4 :: 5 :: 6 :: Nil)
-    assert(Graph.pathCost(hops2Edges(route), amountMsat).costMsat === expectedCost)
+    assert(Graph.pathCost(hops2Edges(route), amountMsat, graph).costMsat === expectedCost)
 
     // now channel 5 could route the amount (10000) but not the amount + fees (10007)
     val (desc, update) = makeUpdate(5L, e, f, feeBaseMsat = 1, feeProportionalMillionth = 400, minHtlcMsat = 0, maxHtlcMsat = Some(10005))
@@ -646,7 +646,7 @@ class RouteCalculationSpec extends FunSuite {
       case Failure(_) => assert(false)
       case Success(someRoute) =>
 
-        val routeCost = Graph.pathCost(hops2Edges(someRoute), DEFAULT_AMOUNT_MSAT)
+        val routeCost = Graph.pathCost(hops2Edges(someRoute), DEFAULT_AMOUNT_MSAT, g)
         val allowedSpread = DEFAULT_AMOUNT_MSAT + (DEFAULT_AMOUNT_MSAT * Router.DEFAULT_ALLOWED_SPREAD)
 
         // over the three routes we could only get the 2 cheapest because the third is too expensive (over 10% of the cheapest)

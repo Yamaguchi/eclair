@@ -214,6 +214,21 @@ class GraphSpec extends FunSuite {
     assert(!withoutE.containsEdge(descFromNodes(6, b, e)))
   }
 
+  test("update the score of an edge") {
+    val graph = makeTestGraph()
+
+    assert(graph.scoreBy(ShortChannelId(1L)) === Some(Graph.DEFAULT_SUCCESS_FACTOR))
+    val g1 = graph.updateScore(ShortChannelId(1L), { _ => 10 })
+    assert(g1.scoreBy(ShortChannelId(1L)) === Some(10))
+
+    // bulk update a set of shortChannelIds { 3, 5 }
+    val successfulIds = Set(3,5).map(ShortChannelId(_))
+    val g2 = graph.updateSuccessFactors(successfulIds)
+    assert(g2.scoreBy(ShortChannelId(3)) === Some(30000))
+    assert(g2.scoreBy(ShortChannelId(4)) === Some(50000))
+    assert(g2.scoreBy(ShortChannelId(5)) === Some(30000))
+  }
+
   def edgeFromDesc(tuple: (ChannelDesc, ChannelUpdate)): GraphEdge = GraphEdge(tuple._1, tuple._2)
 
   def descFromNodes(shortChannelId: Long, a: PublicKey, b: PublicKey): ChannelDesc = {

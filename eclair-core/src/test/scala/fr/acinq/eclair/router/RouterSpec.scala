@@ -26,11 +26,12 @@ import fr.acinq.eclair.channel.BITCOIN_FUNDING_EXTERNAL_CHANNEL_SPENT
 import fr.acinq.eclair.crypto.TransportHandler
 import fr.acinq.eclair.io.Peer.{InvalidSignature, PeerRoutingMessage}
 import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
-import fr.acinq.eclair.router.Announcements.makeChannelUpdate
+import fr.acinq.eclair.router.Announcements.{makeChannelUpdate, makeNodeAnnouncement}
 import fr.acinq.eclair.transactions.Scripts
-import fr.acinq.eclair.wire.QueryShortChannelIds
+import fr.acinq.eclair.wire.{Color, QueryShortChannelIds}
 import fr.acinq.eclair.{Globals, ShortChannelId, randomKey}
 import RouteCalculationSpec.DEFAULT_AMOUNT_MSAT
+import fr.acinq.eclair.payment.PaymentLifecycle.PaymentSucceeded
 import scala.collection.SortedSet
 import scala.compat.Platform
 import scala.concurrent.duration._
@@ -261,4 +262,74 @@ class RouterSpec extends BaseRouterSpec {
     val query = transport.expectMsgType[QueryShortChannelIds]
     assert(ChannelRangeQueries.decodeShortChannelIds(query.data)._2 == SortedSet(channelId))
   }
+
+  test("update the success factors and choose a route accordingly") { fixture =>
+    import fixture._
+    val sender = TestProbe()
+
+    // the graph in this test: source=a target=f
+    // a --(1)--> b ---(2)--> c --(3)--> d --(5)--> e --(4)--> f
+    //                                    \---6---> g ---7--->/
+
+    val (priv_g, priv_funding_g) = (randomKey, randomKey)
+    val (g, funding_g) = (priv_g.publicKey, priv_funding_g.publicKey)
+    val ann_g = makeNodeAnnouncement(priv_g, "node-G", Color(10, 20, -10), Nil)
+
+    val channelId_dg = ShortChannelId(420000, 6, 0)
+    val channelId_gf = ShortChannelId(420000, 7, 0)
+    val channelId_de = ShortChannelId(419900, 5, 0) // this channel is a bit older, will be preferred initially
+
+    val chan_dg = channelAnnouncement(channelId_dg, priv_d, priv_g, priv_funding_d, priv_funding_g)
+    val chan_gf = channelAnnouncement(channelId_gf, priv_g, priv_f, priv_funding_g, priv_funding_f)
+    val chan_de = channelAnnouncement(channelId_de, priv_d, priv_e, priv_funding_d, priv_funding_e)
+
+    val channelUpdate_de = makeChannelUpdate(Block.RegtestGenesisBlock.hash, priv_d, e, channelId_de, cltvExpiryDelta = 4, htlcMinimumMsat = 0, feeBaseMsat = 153000, feeProportionalMillionths = 4, htlcMaximumMsat = 500000000L)
+    val channelUpdate_ed = makeChannelUpdate(Block.RegtestGenesisBlock.hash, priv_e, d, channelId_de, cltvExpiryDelta = 4, htlcMinimumMsat = 0, feeBaseMsat = 153000, feeProportionalMillionths = 4, htlcMaximumMsat = 500000000L)
+    val channelUpdate_dg = makeChannelUpdate(Block.RegtestGenesisBlock.hash, priv_d, g, channelId_dg, cltvExpiryDelta = 9, htlcMinimumMsat = 0, feeBaseMsat = 786000, feeProportionalMillionths = 8, htlcMaximumMsat = 500000000L)
+    val channelUpdate_gd = makeChannelUpdate(Block.RegtestGenesisBlock.hash, priv_g, d, channelId_dg, cltvExpiryDelta = 9, htlcMinimumMsat = 0, feeBaseMsat = 786000, feeProportionalMillionths = 8, htlcMaximumMsat = 500000000L)
+    val channelUpdate_gf = makeChannelUpdate(Block.RegtestGenesisBlock.hash, priv_g, f, channelId_gf, cltvExpiryDelta = 9, htlcMinimumMsat = 0, feeBaseMsat = 786000, feeProportionalMillionths = 8, htlcMaximumMsat = 500000000L)
+    val channelUpdate_fg = makeChannelUpdate(Block.RegtestGenesisBlock.hash, priv_f, g, channelId_gf, cltvExpiryDelta = 9, htlcMinimumMsat = 0, feeBaseMsat = 786000, feeProportionalMillionths = 8, htlcMaximumMsat = 500000000L)
+
+    router ! PeerRoutingMessage(null, remoteNodeId, chan_de)
+    router ! PeerRoutingMessage(null, remoteNodeId, chan_dg)
+    router ! PeerRoutingMessage(null, remoteNodeId, chan_gf)
+    router ! PeerRoutingMessage(null, remoteNodeId, ann_g)
+    router ! PeerRoutingMessage(null, remoteNodeId, channelUpdate_de)
+    router ! PeerRoutingMessage(null, remoteNodeId, channelUpdate_ed)
+    router ! PeerRoutingMessage(null, remoteNodeId, channelUpdate_dg)
+    router ! PeerRoutingMessage(null, remoteNodeId, channelUpdate_gd)
+    router ! PeerRoutingMessage(null, remoteNodeId, channelUpdate_gf)
+    router ! PeerRoutingMessage(null, remoteNodeId, channelUpdate_fg)
+
+    watcher.expectMsg(ValidateRequest(chan_de))
+    watcher.expectMsg(ValidateRequest(chan_dg))
+    watcher.expectMsg(ValidateRequest(chan_gf))
+
+    watcher.send(router, ValidateResult(chan_de, Some(Transaction(version = 0, txIn = Nil, txOut = TxOut(Satoshi(1000000), write(pay2wsh(Scripts.multiSig2of2(funding_d, funding_e)))) :: Nil, lockTime = 0)), true, None))
+    watcher.send(router, ValidateResult(chan_dg, Some(Transaction(version = 0, txIn = Nil, txOut = TxOut(Satoshi(1000000), write(pay2wsh(Scripts.multiSig2of2(funding_d, funding_g)))) :: Nil, lockTime = 0)), true, None))
+    watcher.send(router, ValidateResult(chan_gf, Some(Transaction(version = 0, txIn = Nil, txOut = TxOut(Satoshi(1000000), write(pay2wsh(Scripts.multiSig2of2(funding_g, funding_f)))) :: Nil, lockTime = 0)), true, None))
+
+    // Route R' is found with all scores == 0, the route goes through E (there is an edge that is older than those in the route passing from G)
+    sender.send(router, RouteRequest(a, f, DEFAULT_AMOUNT_MSAT, optimize = Some(RouteOptimization.SCORE_OPTIMIZED), numRoutes = 1))
+    val res = sender.expectMsgType[RouteResponse]
+    assert(res.hops.map(_.lastUpdate.shortChannelId.toString).toList === "420000x1x0" :: "420000x2x0" :: "420000x3x0" :: "419900x5x0" :: "420000x4x0" :: Nil)
+
+    val successfulRoute = Seq(
+      Hop(nodeId = a, nextNodeId = b, channelUpdate_ab),
+      Hop(nodeId = b, nextNodeId = c, channelUpdate_bc),
+      Hop(nodeId = c, nextNodeId = d, channelUpdate_cd),
+      Hop(nodeId = d, nextNodeId = g, channelUpdate_dg),
+      Hop(nodeId = g, nextNodeId = f, channelUpdate_gf)
+    )
+
+    // fake payment succeeded to increase some channel's score
+    val ps = PaymentSucceeded(DEFAULT_AMOUNT_MSAT, "00" * 32, "01" * 32, successfulRoute)
+    sender.send(router, ps)
+
+    // Route R'' != R' because of scores, the route now goes through G
+    sender.send(router, RouteRequest(a, f, DEFAULT_AMOUNT_MSAT, optimize = Some(RouteOptimization.SCORE_OPTIMIZED), numRoutes = 1))
+    val res1 = sender.expectMsgType[RouteResponse](max = 10 minutes)
+    assert(res1.hops.map(_.lastUpdate.shortChannelId.toString).toList === "420000x1x0" :: "420000x2x0" :: "420000x3x0" :: "420000x6x0" :: "420000x7x0" :: Nil)
+  }
+
 }
