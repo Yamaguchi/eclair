@@ -475,11 +475,6 @@ object Graph {
 
       def scoreBy(shortChannelId: ShortChannelId) = scores.get(shortChannelId)
 
-      def updateScore(shortChannelId: ShortChannelId, updateF: Long => Long) = {
-        val oldScore = scores.getOrElse(shortChannelId, DEFAULT_SUCCESS_FACTOR)
-        this.copy(scores = scores.updated(shortChannelId, updateF(oldScore)))
-      }
-
       /**
         * It will increase the factor of the channels in @param shortChannelIds and decrease
         * the factor for those not in the param.

@@ -217,10 +217,6 @@ class GraphSpec extends FunSuite {
   test("update the score of an edge") {
     val graph = makeTestGraph()
 
-    assert(graph.scoreBy(ShortChannelId(1L)) === Some(Graph.DEFAULT_SUCCESS_FACTOR))
-    val g1 = graph.updateScore(ShortChannelId(1L), { _ => 10 })
-    assert(g1.scoreBy(ShortChannelId(1L)) === Some(10))
-
     // bulk update a set of shortChannelIds { 3, 5 }
     val successfulIds = Set(3,5).map(ShortChannelId(_))
     val g2 = graph.updateSuccessFactors(successfulIds)

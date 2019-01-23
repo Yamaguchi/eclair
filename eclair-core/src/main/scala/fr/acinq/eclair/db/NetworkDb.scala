@@ -63,6 +63,4 @@ trait NetworkDb {
 
   def increasePaymentSuccessful(shortChannelId: ShortChannelId)
 
-  //def increasePaymentSuccessful(shortChannelId: ShortChannelId)
-
 }

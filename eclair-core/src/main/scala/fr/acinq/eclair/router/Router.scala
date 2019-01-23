@@ -99,7 +99,7 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
   context.system.eventStream.subscribe(self, classOf[LocalChannelUpdate])
   context.system.eventStream.subscribe(self, classOf[LocalChannelDown])
   context.system.eventStream.subscribe(self, classOf[PaymentSucceeded]) // used to track channel scores
-//  context.system.eventStream.subscribe(self, classOf[PaymentFailed])
+  context.system.eventStream.subscribe(self, classOf[PaymentFailed])
 
   setTimer(TickBroadcast.toString, TickBroadcast, nodeParams.routerBroadcastInterval, repeat = true)
   setTimer(TickPruneStaleChannels.toString, TickPruneStaleChannels, 1 hour, repeat = true)
@@ -542,9 +542,12 @@ class Router(nodeParams: NodeParams, watcher: ActorRef, initialized: Option[Prom
     case Event(ps: PaymentSucceeded, d) =>
       // we update the success factors for the channels that were involved in the successful payment
       val successfulShortChannelIds = ps.route.map(_.lastUpdate.shortChannelId).toSet
-      successfulShortChannelIds.foreach(db.increasePaymentSuccessful)
-      //
+      successfulShortChannelIds.foreach(db.increasePaymentSuccessful) // increment the counter in networkDb
       val g1 = d.graph.updateSuccessFactors(successfulShortChannelIds)
+      stay using d.copy(graph = g1)
+    // for payment failed we decrease the factor of all the channels
+    case Event(_: PaymentFailed, d) =>
+      val g1 = d.graph.updateSuccessFactors(Set.empty)
       stay using d.copy(graph = g1)
   }
 

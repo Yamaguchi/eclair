@@ -660,7 +660,7 @@ class RouteCalculationSpec extends FunSuite {
 
     // A -> B -> C -> D is 'fee optimized', lower fees route (totFees = 2, totCltv = 20)
     // A -> E -> F -> D is 'timeout optimized', lower CLTV route (totFees = 11, totCltv = 8)
-    // A -> E -> C -> D is 'score optimized', more recent channel/larger capacity route
+    // A -> E -> C -> D is 'score optimized', older channel/larger capacity route
     val updates = List(
       makeUpdate(ShortChannelId("1000x0x1"), a, b, feeBaseMsat = 1, 0, minHtlcMsat = 0, maxHtlcMsat = None, cltvDelta = 3),
       makeUpdate(ShortChannelId("1000x0x4"), a, e, feeBaseMsat = 1, 0, minHtlcMsat = 0, maxHtlcMsat = None, cltvDelta = 2),
@@ -687,7 +687,7 @@ class RouteCalculationSpec extends FunSuite {
     assert(hops2ShortChannelIds(routeScoreOptimized) === "1000x0x4" :: "876x0x7" :: "1000x0x3" :: Nil)
   }
 
-  test("prefer going through an older channel if fees and CLTVare the same") {
+  test("prefer going through an older channel if fees and CLTV are the same") {
 
     val g = makeGraph(List(
       makeUpdate(ShortChannelId("20x0x1"), a, b, feeBaseMsat = 1, 0, minHtlcMsat = 0, maxHtlcMsat = None, cltvDelta = 1),

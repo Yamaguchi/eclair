@@ -31,7 +31,8 @@ import fr.acinq.eclair.transactions.Scripts
 import fr.acinq.eclair.wire.{Color, QueryShortChannelIds}
 import fr.acinq.eclair.{Globals, ShortChannelId, randomKey}
 import RouteCalculationSpec.DEFAULT_AMOUNT_MSAT
-import fr.acinq.eclair.payment.PaymentLifecycle.PaymentSucceeded
+import fr.acinq.eclair.payment.PaymentLifecycle.{PaymentFailed, PaymentSucceeded}
+
 import scala.collection.SortedSet
 import scala.compat.Platform
 import scala.concurrent.duration._
@@ -323,13 +324,22 @@ class RouterSpec extends BaseRouterSpec {
     )
 
     // fake payment succeeded to increase some channel's score
-    val ps = PaymentSucceeded(DEFAULT_AMOUNT_MSAT, "00" * 32, "01" * 32, successfulRoute)
-    sender.send(router, ps)
+    sender.send(router, PaymentSucceeded(DEFAULT_AMOUNT_MSAT, "00" * 32, "01" * 32, successfulRoute))
 
     // Route R'' != R' because of scores, the route now goes through G
     sender.send(router, RouteRequest(a, f, DEFAULT_AMOUNT_MSAT, optimize = Some(RouteOptimization.SCORE_OPTIMIZED), numRoutes = 1))
-    val res1 = sender.expectMsgType[RouteResponse](max = 10 minutes)
+    val res1 = sender.expectMsgType[RouteResponse]
     assert(res1.hops.map(_.lastUpdate.shortChannelId.toString).toList === "420000x1x0" :: "420000x2x0" :: "420000x3x0" :: "420000x6x0" :: "420000x7x0" :: Nil)
+
+    // now fake a payment failed to decrease the score of the route going through G
+    //sender.send(router, PaymentFailed("00" * 32, Seq.empty))
+    //sender.send(router, PaymentFailed("00" * 32, Seq.empty))
+
+    // the found route goes through E again!
+    //sender.send(router, RouteRequest(a, f, DEFAULT_AMOUNT_MSAT, optimize = Some(RouteOptimization.SCORE_OPTIMIZED), numRoutes = 1))
+    //val res2 = sender.expectMsgType[RouteResponse]
+    //assert(res2.hops.map(_.lastUpdate.shortChannelId.toString).toList === "420000x1x0" :: "420000x2x0" :: "420000x3x0" :: "419900x5x0" :: "420000x4x0" :: Nil)
+
   }
 
 }
