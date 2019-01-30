@@ -92,7 +92,7 @@ class ElectrumClient(serverAddress: InetSocketAddress, ssl: SSL)(implicit val ec
 
   def close() = {
     statusListeners.map(_ ! ElectrumDisconnected)
-    context stop self
+    Option(context).foreach(_ stop self)
   }
 
   def errorHandler(t: Throwable) = {
@@ -368,7 +368,7 @@ object ElectrumClient {
   case class GetAddressHistoryResponse(address: String, history: Seq[TransactionHistoryItem]) extends Response
 
   case class GetScriptHashHistory(scriptHash: BinaryData) extends Request
-  case class GetScriptHashHistoryResponse(scriptHash: BinaryData, history: Seq[TransactionHistoryItem]) extends Response
+  case class GetScriptHashHistoryResponse(scriptHash: BinaryData, history: List[TransactionHistoryItem]) extends Response
 
   case class AddressListUnspent(address: String) extends Request
   case class UnspentItem(tx_hash: BinaryData, tx_pos: Int, value: Long, height: Long) {
