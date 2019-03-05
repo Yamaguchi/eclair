@@ -560,7 +560,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       }
 
     case Event(add: UpdateAddHtlc, d: DATA_NORMAL) =>
-      Try(Commitments.receiveAdd(d.commitments, add)) match {
+      Try(d.commitments.receiveAdd(add)) match {
         case Success(commitments1) => stay using d.copy(commitments = commitments1)
         case Failure(cause) => handleLocalError(cause, d, Some(add))
       }
