@@ -189,7 +189,7 @@ class HtlcReaper extends Actor with ActorLogging {
       val acked = htlcs
         .filter(_.channelId == data.channelId) // only consider htlcs related to this channel
         .filter {
-        case htlc if Commitments.getHtlcCrossSigned(data.commitments, IN, htlc.id).isDefined =>
+        case htlc if data.commitments.getHtlcCrossSigned(IN, htlc.id).isDefined =>
           // this htlc is cross signed in the current commitment, we can fail it
           log.info(s"failing broken htlc=$htlc")
           channel ! CMD_FAIL_HTLC(htlc.id, Right(TemporaryNodeFailure), commit = true)

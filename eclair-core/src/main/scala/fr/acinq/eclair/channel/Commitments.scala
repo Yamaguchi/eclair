@@ -233,6 +233,16 @@ trait Commitments {
     commitments1
   }
 
+  def getHtlcCrossSigned(directionRelativeToLocal: Direction, htlcId: Long): Option[UpdateAddHtlc] = {
+    val remoteSigned = localCommit.spec.htlcs.find(htlc => htlc.direction == directionRelativeToLocal && htlc.add.id == htlcId)
+    val localSigned = remoteNextCommitInfo.left.toOption.map(_.nextRemoteCommit).getOrElse(remoteCommit)
+      .spec.htlcs.find(htlc => htlc.direction == directionRelativeToLocal.opposite && htlc.add.id == htlcId)
+    for {
+      htlc_out <- remoteSigned
+      htlc_in <- localSigned
+    } yield htlc_in.add
+  }
+
   // get the context for this commitment
   def getContext: CommitmentContext
 
@@ -294,18 +304,8 @@ case class SimplifiedCommitment(localParams: LocalParams, remoteParams: RemotePa
 
 object Commitments {
 
-  def getHtlcCrossSigned(commitments: Commitments, directionRelativeToLocal: Direction, htlcId: Long): Option[UpdateAddHtlc] = {
-    val remoteSigned = commitments.localCommit.spec.htlcs.find(htlc => htlc.direction == directionRelativeToLocal && htlc.add.id == htlcId)
-    val localSigned = commitments.remoteNextCommitInfo.left.toOption.map(_.nextRemoteCommit).getOrElse(commitments.remoteCommit)
-      .spec.htlcs.find(htlc => htlc.direction == directionRelativeToLocal.opposite && htlc.add.id == htlcId)
-    for {
-      htlc_out <- remoteSigned
-      htlc_in <- localSigned
-    } yield htlc_in.add
-  }
-
   def sendFulfill(commitments: Commitments, cmd: CMD_FULFILL_HTLC): (Commitments, UpdateFulfillHtlc) =
-    getHtlcCrossSigned(commitments, IN, cmd.id) match {
+    commitments.getHtlcCrossSigned(IN, cmd.id) match {
       case Some(htlc) if commitments.localChanges.proposed.exists {
         case u: UpdateFulfillHtlc if htlc.id == u.id => true
         case u: UpdateFailHtlc if htlc.id == u.id => true
@@ -323,14 +323,14 @@ object Commitments {
     }
 
   def receiveFulfill(commitments: Commitments, fulfill: UpdateFulfillHtlc): Either[Commitments, (Commitments, Origin, UpdateAddHtlc)] =
-    getHtlcCrossSigned(commitments, OUT, fulfill.id) match {
+   commitments.getHtlcCrossSigned(OUT, fulfill.id) match {
       case Some(htlc) if htlc.paymentHash == sha256(fulfill.paymentPreimage) => Right((commitments.addRemoteProposal(fulfill), commitments.originChannels(fulfill.id), htlc))
       case Some(htlc) => throw InvalidHtlcPreimage(commitments.channelId, fulfill.id)
       case None => throw UnknownHtlcId(commitments.channelId, fulfill.id)
     }
 
   def sendFail(commitments: Commitments, cmd: CMD_FAIL_HTLC, nodeSecret: PrivateKey): (Commitments, UpdateFailHtlc) =
-    getHtlcCrossSigned(commitments, IN, cmd.id) match {
+   commitments.getHtlcCrossSigned(IN, cmd.id) match {
       case Some(htlc) if commitments.localChanges.proposed.exists {
         case u: UpdateFulfillHtlc if htlc.id == u.id => true
         case u: UpdateFailHtlc if htlc.id == u.id => true
@@ -360,7 +360,7 @@ object Commitments {
     if ((cmd.failureCode & FailureMessageCodecs.BADONION) == 0) {
       throw InvalidFailureCode(commitments.channelId)
     }
-    getHtlcCrossSigned(commitments, IN, cmd.id) match {
+   commitments.getHtlcCrossSigned(IN, cmd.id) match {
       case Some(htlc) if commitments.localChanges.proposed.exists {
         case u: UpdateFulfillHtlc if htlc.id == u.id => true
         case u: UpdateFailHtlc if htlc.id == u.id => true
@@ -378,7 +378,7 @@ object Commitments {
   }
 
   def receiveFail(commitments: Commitments, fail: UpdateFailHtlc): Either[Commitments, (Commitments, Origin, UpdateAddHtlc)] =
-    getHtlcCrossSigned(commitments, OUT, fail.id) match {
+   commitments.getHtlcCrossSigned(OUT, fail.id) match {
       case Some(htlc) => Right((commitments.addRemoteProposal(fail), commitments.originChannels(fail.id), htlc))
       case None => throw UnknownHtlcId(commitments.channelId, fail.id)
     }
@@ -389,7 +389,7 @@ object Commitments {
       throw InvalidFailureCode(commitments.channelId)
     }
 
-    getHtlcCrossSigned(commitments, OUT, fail.id) match {
+   commitments.getHtlcCrossSigned(OUT, fail.id) match {
       case Some(htlc) => Right((commitments.addRemoteProposal(fail), commitments.originChannels(fail.id), htlc))
       case None => throw UnknownHtlcId(commitments.channelId, fail.id)
     }
