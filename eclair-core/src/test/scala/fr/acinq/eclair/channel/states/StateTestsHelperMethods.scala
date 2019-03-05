@@ -142,7 +142,7 @@ trait StateTestsHelperMethods extends TestKitBase {
     val sender = TestProbe()
     val sCommitIndex = s.stateData.asInstanceOf[HasCommitments].commitments.localCommit.index
     val rCommitIndex = r.stateData.asInstanceOf[HasCommitments].commitments.localCommit.index
-    val rHasChanges = Commitments.localHasChanges(r.stateData.asInstanceOf[HasCommitments].commitments)
+    val rHasChanges = r.stateData.asInstanceOf[HasCommitments].commitments.localHasChanges
     sender.send(s, CMD_SIGN)
     sender.expectMsg("ok")
     s2r.expectMsgType[CommitSig]

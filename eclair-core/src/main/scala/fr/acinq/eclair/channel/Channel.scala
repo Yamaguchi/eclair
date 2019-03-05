@@ -631,7 +631,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
 
     case Event(c@CMD_SIGN, d@DATA_NORMAL(commitments: Commitments, _, _, _, _, _, _)) =>
       commitments.remoteNextCommitInfo match {
-        case _ if !Commitments.localHasChanges(commitments) =>
+        case _ if !commitments.localHasChanges =>
           log.debug("ignoring CMD_SIGN (nothing to sign)")
           stay
         case Right(_) =>
@@ -681,7 +681,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       Try(Commitments.receiveCommit(d.commitments, commit, keyManager)) match {
         case Success((commitments1, revocation)) =>
           log.debug(s"received a new sig, spec:\n${commitments1.specs2String}")
-          if (Commitments.localHasChanges(commitments1)) {
+          if (commitments1.localHasChanges) {
             // if we have newly acknowledged changes let's sign them
             self ! CMD_SIGN
           }
@@ -701,7 +701,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
             log.debug(s"forwarding {} to relayer", forward)
             relayer ! forward
           }
-          if (Commitments.localHasChanges(commitments1) && d.commitments.remoteNextCommitInfo.left.map(_.reSignAsap) == Left(true)) {
+          if (commitments1.localHasChanges && d.commitments.remoteNextCommitInfo.left.map(_.reSignAsap) == Left(true)) {
             self ! CMD_SIGN
           }
           if (d.remoteShutdown.isDefined && !commitments1.localHasUnsignedOutgoingHtlcs) {
@@ -979,7 +979,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
 
     case Event(c@CMD_SIGN, d@DATA_SHUTDOWN(commitments: Commitments, _, _)) =>
       d.commitments.remoteNextCommitInfo match {
-        case _ if !Commitments.localHasChanges(d.commitments) =>
+        case _ if !d.commitments.localHasChanges =>
           log.debug("ignoring CMD_SIGN (nothing to sign)")
           stay
         case Right(_) =>
@@ -1021,7 +1021,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
               goto(NEGOTIATING) using store(DATA_NEGOTIATING(commitments1, localShutdown, remoteShutdown, closingTxProposed = List(List()), bestUnpublishedClosingTx_opt = None)) sending revocation
             }
           } else {
-            if (Commitments.localHasChanges(commitments1)) {
+            if (commitments1.localHasChanges) {
               // if we have newly acknowledged changes let's sign them
               self ! CMD_SIGN
             }
@@ -1057,7 +1057,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
               goto(NEGOTIATING) using store(DATA_NEGOTIATING(commitments1, localShutdown, remoteShutdown, closingTxProposed = List(List()), bestUnpublishedClosingTx_opt = None))
             }
           } else {
-            if (Commitments.localHasChanges(commitments1) && d.commitments.remoteNextCommitInfo.left.map(_.reSignAsap) == Left(true)) {
+            if (commitments1.localHasChanges && d.commitments.remoteNextCommitInfo.left.map(_.reSignAsap) == Left(true)) {
               self ! CMD_SIGN
             }
             stay using store(d.copy(commitments = commitments1))
@@ -2015,7 +2015,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
     htlcsToFail.foreach(add => self ! CMD_FAIL_HTLC(add.id, Right(TemporaryNodeFailure), commit = true))
 
     // have I something to sign?
-    if (Commitments.localHasChanges(commitments1)) {
+    if (commitments1.localHasChanges) {
       self ! CMD_SIGN
     }
 

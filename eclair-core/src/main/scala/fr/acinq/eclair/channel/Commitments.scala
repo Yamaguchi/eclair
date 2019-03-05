@@ -342,6 +342,9 @@ trait Commitments {
 
   def remoteHasUnsignedOutgoingHtlcs: Boolean = remoteChanges.proposed.collectFirst { case u: UpdateAddHtlc => u }.isDefined
 
+  def localHasChanges: Boolean = remoteChanges.acked.size > 0 || localChanges.proposed.size > 0
+
+  def remoteHasChanges: Boolean = localChanges.acked.size > 0 || remoteChanges.proposed.size > 0
 
   // get the context for this commitment
   def getContext: CommitmentContext
@@ -465,10 +468,6 @@ case class SimplifiedCommitment(localParams: LocalParams, remoteParams: RemotePa
 
 object Commitments {
 
-  def localHasChanges(commitments: Commitments): Boolean = commitments.remoteChanges.acked.size > 0 || commitments.localChanges.proposed.size > 0
-
-  def remoteHasChanges(commitments: Commitments): Boolean = commitments.localChanges.acked.size > 0 || commitments.remoteChanges.proposed.size > 0
-
   def revocationPreimage(seed: BinaryData, index: Long): BinaryData = ShaChain.shaChainFromSeed(seed, 0xFFFFFFFFFFFFFFFFL - index)
 
   def revocationHash(seed: BinaryData, index: Long): BinaryData = Crypto.sha256(revocationPreimage(seed, index))
@@ -479,7 +478,7 @@ object Commitments {
     import commitments._
 
     commitments.remoteNextCommitInfo match {
-      case Right(_) if !localHasChanges(commitments) =>
+      case Right(_) if !commitments.localHasChanges =>
         throw CannotSignWithoutChanges(commitments.channelId)
       case Right(remoteNextPerCommitmentPoint) =>
         // remote commitment will includes all local changes + remote acked changes
@@ -534,7 +533,7 @@ object Commitments {
     // we will reply to this sig with our old revocation hash preimage (at index) and our next revocation hash (at index + 1)
     // and will increment our index
 
-    if (!remoteHasChanges(commitments))
+    if (!commitments.remoteHasChanges)
       throw CannotSignWithoutChanges(commitments.channelId)
 
     // check that their signature is valid
