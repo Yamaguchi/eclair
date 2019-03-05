@@ -566,7 +566,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       }
 
     case Event(c: CMD_FULFILL_HTLC, d: DATA_NORMAL) =>
-      Try(Commitments.sendFulfill(d.commitments, c)) match {
+      Try(d.commitments.sendFulfill(c)) match {
         case Success((commitments1, fulfill)) =>
           if (c.commit) self ! CMD_SIGN
           handleCommandSuccess(sender, d.copy(commitments = commitments1)) sending fulfill
@@ -574,7 +574,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       }
 
     case Event(fulfill: UpdateFulfillHtlc, d: DATA_NORMAL) =>
-      Try(Commitments.receiveFulfill(d.commitments, fulfill)) match {
+      Try(d.commitments.receiveFulfill(fulfill)) match {
         case Success(Right((commitments1, origin, htlc))) =>
           // we forward preimages as soon as possible to the upstream channel because it allows us to pull funds
           relayer ! ForwardFulfill(fulfill, origin, htlc)
@@ -914,7 +914,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
 
   when(SHUTDOWN)(handleExceptions {
     case Event(c: CMD_FULFILL_HTLC, d: DATA_SHUTDOWN) =>
-      Try(Commitments.sendFulfill(d.commitments, c)) match {
+      Try(d.commitments.sendFulfill(c)) match {
         case Success((commitments1, fulfill)) =>
           if (c.commit) self ! CMD_SIGN
           handleCommandSuccess(sender, d.copy(commitments = commitments1)) sending fulfill
@@ -922,7 +922,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       }
 
     case Event(fulfill: UpdateFulfillHtlc, d: DATA_SHUTDOWN) =>
-      Try(Commitments.receiveFulfill(d.commitments, fulfill)) match {
+      Try(d.commitments.receiveFulfill(fulfill)) match {
         case Success(Right((commitments1, origin, htlc))) =>
           // we forward preimages as soon as possible to the upstream channel because it allows us to pull funds
           relayer ! ForwardFulfill(fulfill, origin, htlc)
@@ -1144,7 +1144,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
 
   when(CLOSING)(handleExceptions {
     case Event(c: CMD_FULFILL_HTLC, d: DATA_CLOSING) =>
-      Try(Commitments.sendFulfill(d.commitments, c)) match {
+      Try(d.commitments.sendFulfill(c)) match {
         case Success((commitments1, _)) =>
           log.info(s"got valid payment preimage, recalculating transactions to redeem the corresponding htlc on-chain")
           val localCommitPublished1 = d.localCommitPublished.map {
