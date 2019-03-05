@@ -637,7 +637,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
         case Right(_) =>
           Try(Commitments.sendCommit(commitments, keyManager)) match {
             case Success((commitments1, commit)) =>
-              log.debug(s"sending a new sig, spec:\n${Commitments.specs2String(commitments1)}")
+              log.debug(s"sending a new sig, spec:\n${commitments1.specs2String}")
               commitments1.localChanges.signed.collect {
                 case u: UpdateFulfillHtlc => relayer ! CommandBuffer.CommandAck(u.channelId, u.id)
                 case u: UpdateFailHtlc => relayer ! CommandBuffer.CommandAck(u.channelId, u.id)
@@ -680,7 +680,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
     case Event(commit: CommitSig, d: DATA_NORMAL) =>
       Try(Commitments.receiveCommit(d.commitments, commit, keyManager)) match {
         case Success((commitments1, revocation)) =>
-          log.debug(s"received a new sig, spec:\n${Commitments.specs2String(commitments1)}")
+          log.debug(s"received a new sig, spec:\n${commitments1.specs2String}")
           if (Commitments.localHasChanges(commitments1)) {
             // if we have newly acknowledged changes let's sign them
             self ! CMD_SIGN
@@ -696,7 +696,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       Try(Commitments.receiveRevocation(d.commitments, revocation)) match {
         case Success((commitments1, forwards)) =>
           cancelTimer(RevocationTimeout.toString)
-          log.debug(s"received a new rev, spec:\n${Commitments.specs2String(commitments1)}")
+          log.debug(s"received a new rev, spec:\n${commitments1.specs2String}")
           forwards.foreach { forward =>
             log.debug(s"forwarding {} to relayer", forward)
             relayer ! forward
@@ -985,7 +985,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
         case Right(_) =>
           Try(Commitments.sendCommit(d.commitments, keyManager)) match {
             case Success((commitments1, commit)) =>
-              log.debug(s"sending a new sig, spec:\n${Commitments.specs2String(commitments1)}")
+              log.debug(s"sending a new sig, spec:\n${commitments1.specs2String}")
               commitments1.localChanges.signed.collect {
                 case u: UpdateFulfillHtlc => relayer ! CommandBuffer.CommandAck(u.channelId, u.id)
                 case u: UpdateFailHtlc => relayer ! CommandBuffer.CommandAck(u.channelId, u.id)
@@ -1009,7 +1009,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       Try(Commitments.receiveCommit(d.commitments, commit, keyManager)) match {
         case Success((commitments1, revocation)) =>
           // we always reply with a revocation
-          log.debug(s"received a new sig:\n${Commitments.specs2String(commitments1)}")
+          log.debug(s"received a new sig:\n${commitments1.specs2String}")
           context.system.eventStream.publish(ChannelSignatureReceived(self, commitments1))
           if (commitments1.hasNoPendingHtlcs) {
             if (d.commitments.localParams.isFunder) {
@@ -1036,7 +1036,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       Try(Commitments.receiveRevocation(commitments, revocation)) match {
         case Success((commitments1, forwards)) =>
           cancelTimer(RevocationTimeout.toString)
-          log.debug(s"received a new rev, spec:\n${Commitments.specs2String(commitments1)}")
+          log.debug(s"received a new rev, spec:\n${commitments1.specs2String}")
           forwards.foreach {
             case forwardAdd: ForwardAdd =>
               // BOLT 2: A sending node SHOULD fail to route any HTLC added after it sent shutdown.
@@ -1047,7 +1047,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
               relayer ! forward
           }
           if (commitments1.hasNoPendingHtlcs) {
-            log.debug(s"switching to NEGOTIATING spec:\n${Commitments.specs2String(commitments1)}")
+            log.debug(s"switching to NEGOTIATING spec:\n${commitments1.specs2String}")
             if (d.commitments.localParams.isFunder || commitments1.getContext == ContextSimplifiedCommitment) {
               // we are funder or we're using option_simplified_commitmemt, need to initiate the negotiation by sending the first closing_signed
               val (closingTx, closingSigned) = Closing.makeFirstClosingTx(keyManager, commitments1, localShutdown.scriptPubKey, remoteShutdown.scriptPubKey)

@@ -26,6 +26,8 @@ import fr.acinq.eclair.transactions._
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{Features, Globals, UInt64}
 import fr.acinq.bitcoin._
+import fr.acinq.eclair.channel.Commitments.msg2String
+
 import scala.util.{Failure, Success}
 
 // @formatter:off
@@ -41,7 +43,7 @@ case class RemoteCommit(index: Long, spec: CommitmentSpec, txid: BinaryData, rem
 case class WaitingForRevocation(nextRemoteCommit: RemoteCommit, sent: CommitSig, sentAfterLocalCommitIndex: Long, reSignAsap: Boolean = false)
 // @formatter:on
 
-sealed trait Commitments {
+trait Commitments {
 
   val localParams: LocalParams
   val remoteParams: RemoteParams
@@ -78,6 +80,47 @@ sealed trait Commitments {
     val feesMsat = if (localParams.isFunder) Transactions.commitTxFee(Satoshi(remoteParams.dustLimitSatoshis), reduced)(commitmentContext = getContext).amount * 1000 else 0
     reduced.toRemoteMsat - remoteParams.channelReserveSatoshis * 1000 - feesMsat
   }
+
+  /**
+    *
+    * ADDITIONS
+    *
+    */
+
+  def specs2String: String = {
+    s"""(${getContext}) specs:
+       |localcommit:
+       |  toLocal: ${localCommit.spec.toLocalMsat}
+       |  toRemote: $localCommit.spec.toRemoteMsat}
+       |  htlcs:
+       |${localCommit.spec.htlcs.map(h => s"    ${h.direction} ${h.add.id} ${h.add.cltvExpiry}").mkString("\n")}
+       |remotecommit:
+       |  toLocal: ${remoteCommit.spec.toLocalMsat}
+       |  toRemote: ${remoteCommit.spec.toRemoteMsat}
+       |  htlcs:
+       |${remoteCommit.spec.htlcs.map(h => s"    ${h.direction} ${h.add.id} ${h.add.cltvExpiry}").mkString("\n")}
+       |next remotecommit:
+       |  toLocal: ${remoteNextCommitInfo.left.toOption.map(_.nextRemoteCommit.spec.toLocalMsat).getOrElse("N/A")}
+       |  toRemote: ${remoteNextCommitInfo.left.toOption.map(_.nextRemoteCommit.spec.toRemoteMsat).getOrElse("N/A")}
+       |  htlcs:
+       |${remoteNextCommitInfo.left.toOption.map(_.nextRemoteCommit.spec.htlcs.map(h => s"    ${h.direction} ${h.add.id} ${h.add.cltvExpiry}").mkString("\n")).getOrElse("N/A")}""".stripMargin
+  }
+
+  def changes2String: String = {
+    s"""(${getContext}) commitments:
+       |    localChanges:
+       |        proposed: ${localChanges.proposed.map(msg2String(_)).mkString(" ")}
+       |        signed: ${localChanges.signed.map(msg2String(_)).mkString(" ")}
+       |        acked: ${localChanges.acked.map(msg2String(_)).mkString(" ")}
+       |    remoteChanges:
+       |        proposed: ${remoteChanges.proposed.map(msg2String(_)).mkString(" ")}
+       |        acked: ${remoteChanges.acked.map(msg2String(_)).mkString(" ")}
+       |        signed: ${remoteChanges.signed.map(msg2String(_)).mkString(" ")}
+       |    nextHtlcId:
+       |        local: $localNextHtlcId
+       |        remote: $remoteNextHtlcId""".stripMargin
+  }
+
 
   // get the context for this commitment
   def getContext: CommitmentContext
@@ -671,41 +714,6 @@ object Commitments {
     case _: Error => s"err"
     case _: FundingLocked => s"funding_locked"
     case _ => "???"
-  }
-
-  def changes2String(commitments: Commitments): String = {
-    import commitments._
-    s"""(${commitments.getContext}) commitments:
-       |    localChanges:
-       |        proposed: ${localChanges.proposed.map(msg2String(_)).mkString(" ")}
-       |        signed: ${localChanges.signed.map(msg2String(_)).mkString(" ")}
-       |        acked: ${localChanges.acked.map(msg2String(_)).mkString(" ")}
-       |    remoteChanges:
-       |        proposed: ${remoteChanges.proposed.map(msg2String(_)).mkString(" ")}
-       |        acked: ${remoteChanges.acked.map(msg2String(_)).mkString(" ")}
-       |        signed: ${remoteChanges.signed.map(msg2String(_)).mkString(" ")}
-       |    nextHtlcId:
-       |        local: $localNextHtlcId
-       |        remote: $remoteNextHtlcId""".stripMargin
-  }
-
-  def specs2String(commitments: Commitments): String = {
-    s"""(${commitments.getContext}) specs:
-       |localcommit:
-       |  toLocal: ${commitments.localCommit.spec.toLocalMsat}
-       |  toRemote: ${commitments.localCommit.spec.toRemoteMsat}
-       |  htlcs:
-       |${commitments.localCommit.spec.htlcs.map(h => s"    ${h.direction} ${h.add.id} ${h.add.cltvExpiry}").mkString("\n")}
-       |remotecommit:
-       |  toLocal: ${commitments.remoteCommit.spec.toLocalMsat}
-       |  toRemote: ${commitments.remoteCommit.spec.toRemoteMsat}
-       |  htlcs:
-       |${commitments.remoteCommit.spec.htlcs.map(h => s"    ${h.direction} ${h.add.id} ${h.add.cltvExpiry}").mkString("\n")}
-       |next remotecommit:
-       |  toLocal: ${commitments.remoteNextCommitInfo.left.toOption.map(_.nextRemoteCommit.spec.toLocalMsat).getOrElse("N/A")}
-       |  toRemote: ${commitments.remoteNextCommitInfo.left.toOption.map(_.nextRemoteCommit.spec.toRemoteMsat).getOrElse("N/A")}
-       |  htlcs:
-       |${commitments.remoteNextCommitInfo.left.toOption.map(_.nextRemoteCommit.spec.htlcs.map(h => s"    ${h.direction} ${h.add.id} ${h.add.cltvExpiry}").mkString("\n")).getOrElse("N/A")}""".stripMargin
   }
 }
 
