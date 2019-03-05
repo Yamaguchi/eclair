@@ -135,7 +135,7 @@ trait Commitments {
 
   /**
     *
-    * @param cmd         add HTLC command
+    * @param cmd add HTLC command
     * @return either Left(failure, error message) where failure is a failure message (see BOLT #4 and the Failure Message class) or Right((new commitments, updateAddHtlc)
     */
   def sendAdd(cmd: CMD_ADD_HTLC, origin: Origin): Either[ChannelException, (Commitments, UpdateAddHtlc)] = {
@@ -268,6 +268,55 @@ trait Commitments {
       case None => throw UnknownHtlcId(channelId, fulfill.id)
     }
 
+  def sendFail(cmd: CMD_FAIL_HTLC, nodeSecret: PrivateKey): (Commitments, UpdateFailHtlc) =
+    getHtlcCrossSigned(IN, cmd.id) match {
+      case Some(htlc) if localChanges.proposed.exists {
+        case u: UpdateFulfillHtlc if htlc.id == u.id => true
+        case u: UpdateFailHtlc if htlc.id == u.id => true
+        case u: UpdateFailMalformedHtlc if htlc.id == u.id => true
+        case _ => false
+      } =>
+        // we have already sent a fail/fulfill for this htlc
+        throw UnknownHtlcId(channelId, cmd.id)
+      case Some(htlc) =>
+        // we need the shared secret to build the error packet
+        Sphinx.parsePacket(nodeSecret, htlc.paymentHash, htlc.onionRoutingPacket).map(_.sharedSecret) match {
+          case Success(sharedSecret) =>
+            val reason = cmd.reason match {
+              case Left(forwarded) => Sphinx.forwardErrorPacket(forwarded, sharedSecret)
+              case Right(failure) => Sphinx.createErrorPacket(sharedSecret, failure)
+            }
+            val fail = UpdateFailHtlc(channelId, cmd.id, reason)
+            val commitments1 = addLocalProposal(fail)
+            (commitments1, fail)
+          case Failure(_) => throw new CannotExtractSharedSecret(channelId, htlc)
+        }
+      case None => throw UnknownHtlcId(channelId, cmd.id)
+    }
+
+  def sendFailMalformed(cmd: CMD_FAIL_MALFORMED_HTLC): (Commitments, UpdateFailMalformedHtlc) = {
+    // BADONION bit must be set in failure_code
+    if ((cmd.failureCode & FailureMessageCodecs.BADONION) == 0) {
+      throw InvalidFailureCode(channelId)
+    }
+    getHtlcCrossSigned(IN, cmd.id) match {
+      case Some(htlc) if localChanges.proposed.exists {
+        case u: UpdateFulfillHtlc if htlc.id == u.id => true
+        case u: UpdateFailHtlc if htlc.id == u.id => true
+        case u: UpdateFailMalformedHtlc if htlc.id == u.id => true
+        case _ => false
+      } =>
+        // we have already sent a fail/fulfill for this htlc
+        throw UnknownHtlcId(channelId, cmd.id)
+      case Some(htlc) =>
+        val fail = UpdateFailMalformedHtlc(channelId, cmd.id, cmd.onionHash, cmd.failureCode)
+        val commitments1 = addLocalProposal(fail)
+        (commitments1, fail)
+      case None => throw UnknownHtlcId(channelId, cmd.id)
+    }
+  }
+
+
   // get the context for this commitment
   def getContext: CommitmentContext
 
@@ -275,8 +324,11 @@ trait Commitments {
 
 // @formatter: off
 sealed trait CommitmentContext
+
 object ContextCommitmentV1 extends CommitmentContext
+
 object ContextSimplifiedCommitment extends CommitmentContext
+
 // @formatter: on
 
 /**
@@ -329,56 +381,8 @@ case class SimplifiedCommitment(localParams: LocalParams, remoteParams: RemotePa
 
 object Commitments {
 
-  def sendFail(commitments: Commitments, cmd: CMD_FAIL_HTLC, nodeSecret: PrivateKey): (Commitments, UpdateFailHtlc) =
-   commitments.getHtlcCrossSigned(IN, cmd.id) match {
-      case Some(htlc) if commitments.localChanges.proposed.exists {
-        case u: UpdateFulfillHtlc if htlc.id == u.id => true
-        case u: UpdateFailHtlc if htlc.id == u.id => true
-        case u: UpdateFailMalformedHtlc if htlc.id == u.id => true
-        case _ => false
-      } =>
-        // we have already sent a fail/fulfill for this htlc
-        throw UnknownHtlcId(commitments.channelId, cmd.id)
-      case Some(htlc) =>
-        // we need the shared secret to build the error packet
-        Sphinx.parsePacket(nodeSecret, htlc.paymentHash, htlc.onionRoutingPacket).map(_.sharedSecret) match {
-          case Success(sharedSecret) =>
-            val reason = cmd.reason match {
-              case Left(forwarded) => Sphinx.forwardErrorPacket(forwarded, sharedSecret)
-              case Right(failure) => Sphinx.createErrorPacket(sharedSecret, failure)
-            }
-            val fail = UpdateFailHtlc(commitments.channelId, cmd.id, reason)
-            val commitments1 = commitments.addLocalProposal(fail)
-            (commitments1, fail)
-          case Failure(_) => throw new CannotExtractSharedSecret(commitments.channelId, htlc)
-        }
-      case None => throw UnknownHtlcId(commitments.channelId, cmd.id)
-    }
-
-  def sendFailMalformed(commitments: Commitments, cmd: CMD_FAIL_MALFORMED_HTLC): (Commitments, UpdateFailMalformedHtlc) = {
-    // BADONION bit must be set in failure_code
-    if ((cmd.failureCode & FailureMessageCodecs.BADONION) == 0) {
-      throw InvalidFailureCode(commitments.channelId)
-    }
-   commitments.getHtlcCrossSigned(IN, cmd.id) match {
-      case Some(htlc) if commitments.localChanges.proposed.exists {
-        case u: UpdateFulfillHtlc if htlc.id == u.id => true
-        case u: UpdateFailHtlc if htlc.id == u.id => true
-        case u: UpdateFailMalformedHtlc if htlc.id == u.id => true
-        case _ => false
-      } =>
-        // we have already sent a fail/fulfill for this htlc
-        throw UnknownHtlcId(commitments.channelId, cmd.id)
-      case Some(htlc) =>
-        val fail = UpdateFailMalformedHtlc(commitments.channelId, cmd.id, cmd.onionHash, cmd.failureCode)
-        val commitments1 = commitments.addLocalProposal(fail)
-        (commitments1, fail)
-      case None => throw UnknownHtlcId(commitments.channelId, cmd.id)
-    }
-  }
-
   def receiveFail(commitments: Commitments, fail: UpdateFailHtlc): Either[Commitments, (Commitments, Origin, UpdateAddHtlc)] =
-   commitments.getHtlcCrossSigned(OUT, fail.id) match {
+    commitments.getHtlcCrossSigned(OUT, fail.id) match {
       case Some(htlc) => Right((commitments.addRemoteProposal(fail), commitments.originChannels(fail.id), htlc))
       case None => throw UnknownHtlcId(commitments.channelId, fail.id)
     }
@@ -389,7 +393,7 @@ object Commitments {
       throw InvalidFailureCode(commitments.channelId)
     }
 
-   commitments.getHtlcCrossSigned(OUT, fail.id) match {
+    commitments.getHtlcCrossSigned(OUT, fail.id) match {
       case Some(htlc) => Right((commitments.addRemoteProposal(fail), commitments.originChannels(fail.id), htlc))
       case None => throw UnknownHtlcId(commitments.channelId, fail.id)
     }
@@ -400,7 +404,7 @@ object Commitments {
       throw FundeeCannotSendUpdateFee(commitments.channelId)
     }
 
-    if(commitments.getContext == ContextSimplifiedCommitment){
+    if (commitments.getContext == ContextSimplifiedCommitment) {
       throw CannotUpdateFeeWithCommitmentType(commitments.channelId)
     }
 
@@ -440,7 +444,7 @@ object Commitments {
       throw FeerateTooDifferent(commitments.channelId, localFeeratePerKw = localFeeratePerKw, remoteFeeratePerKw = fee.feeratePerKw)
     }
 
-    if(commitments.getContext == ContextSimplifiedCommitment){
+    if (commitments.getContext == ContextSimplifiedCommitment) {
       throw CannotUpdateFeeWithCommitmentType(commitments.channelId)
     }
 
@@ -513,7 +517,7 @@ object Commitments {
         )
 
         val commitments1 = commitments match {
-          case c:CommitmentsV1 => c.copy(
+          case c: CommitmentsV1 => c.copy(
             remoteNextCommitInfo = Left(WaitingForRevocation(RemoteCommit(remoteCommit.index + 1, spec, remoteCommitTx.tx.txid, remoteNextPerCommitmentPoint), commitSig, commitments.localCommit.index)),
             localChanges = localChanges.copy(proposed = Nil, signed = localChanges.proposed),
             remoteChanges = remoteChanges.copy(acked = Nil, signed = remoteChanges.acked))
@@ -526,7 +530,8 @@ object Commitments {
         (commitments1, commitSig)
       case Left(_) =>
         throw CannotSignBeforeRevocation(commitments.channelId)
-    }  }
+    }
+  }
 
   def receiveCommit(commitments: Commitments, commit: CommitSig, keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, RevokeAndAck) = {
     implicit val commitmentContext = commitments.getContext

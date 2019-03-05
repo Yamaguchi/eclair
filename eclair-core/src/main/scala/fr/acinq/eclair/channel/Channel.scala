@@ -584,7 +584,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       }
 
     case Event(c: CMD_FAIL_HTLC, d: DATA_NORMAL) =>
-      Try(Commitments.sendFail(d.commitments, c, nodeParams.privateKey)) match {
+      Try(d.commitments.sendFail(c, nodeParams.privateKey)) match {
         case Success((commitments1, fail)) =>
           if (c.commit) self ! CMD_SIGN
           handleCommandSuccess(sender, d.copy(commitments = commitments1)) sending fail
@@ -592,7 +592,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       }
 
     case Event(c: CMD_FAIL_MALFORMED_HTLC, d: DATA_NORMAL) =>
-      Try(Commitments.sendFailMalformed(d.commitments, c)) match {
+      Try(d.commitments.sendFailMalformed(c)) match {
         case Success((commitments1, fail)) =>
           if (c.commit) self ! CMD_SIGN
           handleCommandSuccess(sender, d.copy(commitments = commitments1)) sending fail
@@ -932,7 +932,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       }
 
     case Event(c: CMD_FAIL_HTLC, d: DATA_SHUTDOWN) =>
-      Try(Commitments.sendFail(d.commitments, c, nodeParams.privateKey)) match {
+      Try(d.commitments.sendFail(c, nodeParams.privateKey)) match {
         case Success((commitments1, fail)) =>
           if (c.commit) self ! CMD_SIGN
           handleCommandSuccess(sender, d.copy(commitments = commitments1)) sending fail
@@ -940,7 +940,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       }
 
     case Event(c: CMD_FAIL_MALFORMED_HTLC, d: DATA_SHUTDOWN) =>
-      Try(Commitments.sendFailMalformed(d.commitments, c)) match {
+      Try(d.commitments.sendFailMalformed(c)) match {
         case Success((commitments1, fail)) =>
           if (c.commit) self ! CMD_SIGN
           handleCommandSuccess(sender, d.copy(commitments = commitments1)) sending fail
