@@ -704,7 +704,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
           if (Commitments.localHasChanges(commitments1) && d.commitments.remoteNextCommitInfo.left.map(_.reSignAsap) == Left(true)) {
             self ! CMD_SIGN
           }
-          if (d.remoteShutdown.isDefined && !Commitments.localHasUnsignedOutgoingHtlcs(commitments1)) {
+          if (d.remoteShutdown.isDefined && !commitments1.localHasUnsignedOutgoingHtlcs) {
             // we were waiting for our pending htlcs to be signed before replying with our local shutdown
             val localShutdown = Shutdown(d.channelId, commitments1.localParams.defaultFinalScriptPubKey)
             // note: it means that we had pending htlcs to sign, therefore we go to SHUTDOWN, not to NEGOTIATING
@@ -722,7 +722,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       val localScriptPubKey = localScriptPubKey_opt.getOrElse(d.commitments.localParams.defaultFinalScriptPubKey)
       if (d.localShutdown.isDefined)
         handleCommandError(ClosingAlreadyInProgress((d.channelId)), c)
-      else if (Commitments.localHasUnsignedOutgoingHtlcs(d.commitments))
+      else if (d.commitments.localHasUnsignedOutgoingHtlcs)
       // TODO: simplistic behavior, we could also sign-then-close
         handleCommandError(CannotCloseWithUnsignedOutgoingHtlcs((d.channelId)), c)
       else if (!Closing.isValidFinalScriptPubkey(localScriptPubKey))
@@ -750,9 +750,9 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
 
       if (!Closing.isValidFinalScriptPubkey(remoteScriptPubKey)) {
         handleLocalError(InvalidFinalScript(d.channelId), d, Some(remoteShutdown))
-      } else if (Commitments.remoteHasUnsignedOutgoingHtlcs(d.commitments)) {
+      } else if (d.commitments.remoteHasUnsignedOutgoingHtlcs) {
         handleLocalError(CannotCloseWithUnsignedOutgoingHtlcs(d.channelId), d, Some(remoteShutdown))
-      } else if (Commitments.localHasUnsignedOutgoingHtlcs(d.commitments)) { // do we have unsigned outgoing htlcs?
+      } else if (d.commitments.localHasUnsignedOutgoingHtlcs) { // do we have unsigned outgoing htlcs?
         require(d.localShutdown.isEmpty, "can't have pending unsigned outgoing htlcs after having sent Shutdown")
         // are we in the middle of a signature?
         d.commitments.remoteNextCommitInfo match {

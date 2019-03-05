@@ -338,6 +338,11 @@ trait Commitments {
 
   def receiveFee(fee: UpdateFee, maxFeerateMismatch: Double): Commitments
 
+  def localHasUnsignedOutgoingHtlcs: Boolean = localChanges.proposed.collectFirst { case u: UpdateAddHtlc => u }.isDefined
+
+  def remoteHasUnsignedOutgoingHtlcs: Boolean = remoteChanges.proposed.collectFirst { case u: UpdateAddHtlc => u }.isDefined
+
+
   // get the context for this commitment
   def getContext: CommitmentContext
 
@@ -459,10 +464,6 @@ case class SimplifiedCommitment(localParams: LocalParams, remoteParams: RemotePa
 }
 
 object Commitments {
-
-  def localHasUnsignedOutgoingHtlcs(commitments: Commitments): Boolean = commitments.localChanges.proposed.collectFirst { case u: UpdateAddHtlc => u }.isDefined
-
-  def remoteHasUnsignedOutgoingHtlcs(commitments: Commitments): Boolean = commitments.remoteChanges.proposed.collectFirst { case u: UpdateAddHtlc => u }.isDefined
 
   def localHasChanges(commitments: Commitments): Boolean = commitments.remoteChanges.acked.size > 0 || commitments.localChanges.proposed.size > 0
 
