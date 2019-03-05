@@ -63,9 +63,21 @@ trait Commitments {
 
   def hasNoPendingHtlcs: Boolean = localCommit.spec.htlcs.isEmpty && remoteCommit.spec.htlcs.isEmpty && remoteNextCommitInfo.isRight
 
-  def addLocalProposal(proposal: UpdateMessage): Commitments = Commitments.addLocalProposal(this, proposal)
+  /**
+    * add a change to our proposed change list
+    *
+    * @param proposal
+    * @return an updated commitment instance
+    */
+  def addLocalProposal(proposal: UpdateMessage): Commitments
 
-  def addRemoteProposal(proposal: UpdateMessage): Commitments = Commitments.addRemoteProposal(this, proposal)
+  /**
+    * add a change to the remote proposed change list
+    *
+    * @param proposal
+    * @return an updated commitment instance
+    */
+  def addRemoteProposal(proposal: UpdateMessage): Commitments
 
   def timedoutOutgoingHtlcs(blockheight: Long): Set[UpdateAddHtlc] =
     (localCommit.spec.htlcs.filter(htlc => htlc.direction == OUT && blockheight >= htlc.add.cltvExpiry) ++
@@ -152,6 +164,10 @@ case class CommitmentsV1(localParams: LocalParams, remoteParams: RemoteParams,
                          remotePerCommitmentSecrets: ShaChain, channelId: BinaryData) extends Commitments {
 
   override def getContext: CommitmentContext = ContextCommitmentV1
+
+  override def addLocalProposal(proposal: UpdateMessage): Commitments = this.copy(localChanges = localChanges.copy(proposed = localChanges.proposed :+ proposal))
+
+  override def addRemoteProposal(proposal: UpdateMessage): Commitments = this.copy(remoteChanges = remoteChanges.copy(proposed = remoteChanges.proposed :+ proposal))
 }
 
 
@@ -169,25 +185,13 @@ case class SimplifiedCommitment(localParams: LocalParams, remoteParams: RemotePa
 
 
   override def getContext: CommitmentContext = ContextSimplifiedCommitment
+
+  override def addLocalProposal(proposal: UpdateMessage): Commitments = this.copy(localChanges = localChanges.copy(proposed = localChanges.proposed :+ proposal))
+
+  override def addRemoteProposal(proposal: UpdateMessage): Commitments = this.copy(remoteChanges = remoteChanges.copy(proposed = remoteChanges.proposed :+ proposal))
 }
 
 object Commitments {
-  /**
-    * add a change to our proposed change list
-    *
-    * @param commitments
-    * @param proposal
-    * @return an updated commitment instance
-    */
-  def addLocalProposal(commitments: Commitments, proposal: UpdateMessage): Commitments = commitments match {
-    case c: CommitmentsV1 => c.copy(localChanges = commitments.localChanges.copy(proposed = commitments.localChanges.proposed :+ proposal))
-    case s: SimplifiedCommitment => s.copy(localChanges = commitments.localChanges.copy(proposed = commitments.localChanges.proposed :+ proposal))
-  }
-
-  def addRemoteProposal(commitments: Commitments, proposal: UpdateMessage): Commitments = commitments match {
-    case c: CommitmentsV1 => c.copy(remoteChanges = commitments.remoteChanges.copy(proposed = commitments.remoteChanges.proposed :+ proposal))
-    case s: SimplifiedCommitment => s.copy(remoteChanges = commitments.remoteChanges.copy(proposed = commitments.remoteChanges.proposed :+ proposal))
-  }
 
   /**
     *
@@ -221,7 +225,7 @@ object Commitments {
     // let's compute the current commitment *as seen by them* with this change taken into account
     val add = UpdateAddHtlc(commitments.channelId, commitments.localNextHtlcId, cmd.amountMsat, cmd.paymentHash, cmd.cltvExpiry, cmd.onion)
     // we increment the local htlc index and add an entry to the origins map
-    val commitments1 = addLocalProposal(commitments, add) match {
+    val commitments1 = commitments.addLocalProposal(add) match {
       case c: CommitmentsV1 => c.copy(localNextHtlcId = commitments.localNextHtlcId + 1, originChannels = commitments.originChannels + (add.id -> origin))
       case s: SimplifiedCommitment => s.copy(localNextHtlcId = commitments.localNextHtlcId + 1, originChannels = commitments.originChannels + (add.id -> origin))
     }
@@ -268,7 +272,7 @@ object Commitments {
     }
 
     // let's compute the current commitment *as seen by us* including this change
-    val commitments1 = addRemoteProposal(commitments, add) match {
+    val commitments1 = commitments.addRemoteProposal(add) match {
       case c: CommitmentsV1 => c.copy(remoteNextHtlcId = commitments.remoteNextHtlcId + 1)
       case s: SimplifiedCommitment => s.copy(remoteNextHtlcId = commitments.remoteNextHtlcId + 1)
     }
@@ -316,7 +320,7 @@ object Commitments {
         throw UnknownHtlcId(commitments.channelId, cmd.id)
       case Some(htlc) if htlc.paymentHash == sha256(cmd.r) =>
         val fulfill = UpdateFulfillHtlc(commitments.channelId, cmd.id, cmd.r)
-        val commitments1 = addLocalProposal(commitments, fulfill)
+        val commitments1 = commitments.addLocalProposal(fulfill)
         (commitments1, fulfill)
       case Some(htlc) => throw InvalidHtlcPreimage(commitments.channelId, cmd.id)
       case None => throw UnknownHtlcId(commitments.channelId, cmd.id)
@@ -324,7 +328,7 @@ object Commitments {
 
   def receiveFulfill(commitments: Commitments, fulfill: UpdateFulfillHtlc): Either[Commitments, (Commitments, Origin, UpdateAddHtlc)] =
     getHtlcCrossSigned(commitments, OUT, fulfill.id) match {
-      case Some(htlc) if htlc.paymentHash == sha256(fulfill.paymentPreimage) => Right((addRemoteProposal(commitments, fulfill), commitments.originChannels(fulfill.id), htlc))
+      case Some(htlc) if htlc.paymentHash == sha256(fulfill.paymentPreimage) => Right((commitments.addRemoteProposal(fulfill), commitments.originChannels(fulfill.id), htlc))
       case Some(htlc) => throw InvalidHtlcPreimage(commitments.channelId, fulfill.id)
       case None => throw UnknownHtlcId(commitments.channelId, fulfill.id)
     }
@@ -348,7 +352,7 @@ object Commitments {
               case Right(failure) => Sphinx.createErrorPacket(sharedSecret, failure)
             }
             val fail = UpdateFailHtlc(commitments.channelId, cmd.id, reason)
-            val commitments1 = addLocalProposal(commitments, fail)
+            val commitments1 = commitments.addLocalProposal(fail)
             (commitments1, fail)
           case Failure(_) => throw new CannotExtractSharedSecret(commitments.channelId, htlc)
         }
@@ -371,7 +375,7 @@ object Commitments {
         throw UnknownHtlcId(commitments.channelId, cmd.id)
       case Some(htlc) =>
         val fail = UpdateFailMalformedHtlc(commitments.channelId, cmd.id, cmd.onionHash, cmd.failureCode)
-        val commitments1 = addLocalProposal(commitments, fail)
+        val commitments1 = commitments.addLocalProposal(fail)
         (commitments1, fail)
       case None => throw UnknownHtlcId(commitments.channelId, cmd.id)
     }
@@ -379,7 +383,7 @@ object Commitments {
 
   def receiveFail(commitments: Commitments, fail: UpdateFailHtlc): Either[Commitments, (Commitments, Origin, UpdateAddHtlc)] =
     getHtlcCrossSigned(commitments, OUT, fail.id) match {
-      case Some(htlc) => Right((addRemoteProposal(commitments, fail), commitments.originChannels(fail.id), htlc))
+      case Some(htlc) => Right((commitments.addRemoteProposal(fail), commitments.originChannels(fail.id), htlc))
       case None => throw UnknownHtlcId(commitments.channelId, fail.id)
     }
 
@@ -390,7 +394,7 @@ object Commitments {
     }
 
     getHtlcCrossSigned(commitments, OUT, fail.id) match {
-      case Some(htlc) => Right((addRemoteProposal(commitments, fail), commitments.originChannels(fail.id), htlc))
+      case Some(htlc) => Right((commitments.addRemoteProposal(fail), commitments.originChannels(fail.id), htlc))
       case None => throw UnknownHtlcId(commitments.channelId, fail.id)
     }
   }
