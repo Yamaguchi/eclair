@@ -316,6 +316,23 @@ trait Commitments {
     }
   }
 
+  def receiveFail(fail: UpdateFailHtlc): Either[Commitments, (Commitments, Origin, UpdateAddHtlc)] =
+    getHtlcCrossSigned(OUT, fail.id) match {
+      case Some(htlc) => Right((addRemoteProposal(fail), originChannels(fail.id), htlc))
+      case None => throw UnknownHtlcId(channelId, fail.id)
+    }
+
+  def receiveFailMalformed(fail: UpdateFailMalformedHtlc): Either[Commitments, (Commitments, Origin, UpdateAddHtlc)] = {
+    // A receiving node MUST fail the channel if the BADONION bit in failure_code is not set for update_fail_malformed_htlc.
+    if ((fail.failureCode & FailureMessageCodecs.BADONION) == 0) {
+      throw InvalidFailureCode(channelId)
+    }
+
+    getHtlcCrossSigned(OUT, fail.id) match {
+      case Some(htlc) => Right((addRemoteProposal(fail), originChannels(fail.id), htlc))
+      case None => throw UnknownHtlcId(channelId, fail.id)
+    }
+  }
 
   // get the context for this commitment
   def getContext: CommitmentContext
@@ -380,25 +397,6 @@ case class SimplifiedCommitment(localParams: LocalParams, remoteParams: RemotePa
 }
 
 object Commitments {
-
-  def receiveFail(commitments: Commitments, fail: UpdateFailHtlc): Either[Commitments, (Commitments, Origin, UpdateAddHtlc)] =
-    commitments.getHtlcCrossSigned(OUT, fail.id) match {
-      case Some(htlc) => Right((commitments.addRemoteProposal(fail), commitments.originChannels(fail.id), htlc))
-      case None => throw UnknownHtlcId(commitments.channelId, fail.id)
-    }
-
-  def receiveFailMalformed(commitments: Commitments, fail: UpdateFailMalformedHtlc): Either[Commitments, (Commitments, Origin, UpdateAddHtlc)] = {
-    // A receiving node MUST fail the channel if the BADONION bit in failure_code is not set for update_fail_malformed_htlc.
-    if ((fail.failureCode & FailureMessageCodecs.BADONION) == 0) {
-      throw InvalidFailureCode(commitments.channelId)
-    }
-
-    commitments.getHtlcCrossSigned(OUT, fail.id) match {
-      case Some(htlc) => Right((commitments.addRemoteProposal(fail), commitments.originChannels(fail.id), htlc))
-      case None => throw UnknownHtlcId(commitments.channelId, fail.id)
-    }
-  }
-
   def sendFee(commitments: Commitments, cmd: CMD_UPDATE_FEE): (Commitments, UpdateFee) = {
     if (!commitments.localParams.isFunder) {
       throw FundeeCannotSendUpdateFee(commitments.channelId)
