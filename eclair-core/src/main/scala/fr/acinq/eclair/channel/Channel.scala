@@ -635,7 +635,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
           log.debug("ignoring CMD_SIGN (nothing to sign)")
           stay
         case Right(_) =>
-          Try(Commitments.sendCommit(commitments, keyManager)) match {
+          Try(commitments.sendCommit(keyManager)) match {
             case Success((commitments1, commit)) =>
               log.debug(s"sending a new sig, spec:\n${commitments1.specs2String}")
               commitments1.localChanges.signed.collect {
@@ -678,7 +678,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       }
 
     case Event(commit: CommitSig, d: DATA_NORMAL) =>
-      Try(Commitments.receiveCommit(d.commitments, commit, keyManager)) match {
+      Try(d.commitments.receiveCommit(commit, keyManager)) match {
         case Success((commitments1, revocation)) =>
           log.debug(s"received a new sig, spec:\n${commitments1.specs2String}")
           if (commitments1.localHasChanges) {
@@ -693,7 +693,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
     case Event(revocation: RevokeAndAck, d: DATA_NORMAL) =>
       // we received a revocation because we sent a signature
       // => all our changes have been acked
-      Try(Commitments.receiveRevocation(d.commitments, revocation)) match {
+      Try(d.commitments.receiveRevocation(revocation)) match {
         case Success((commitments1, forwards)) =>
           cancelTimer(RevocationTimeout.toString)
           log.debug(s"received a new rev, spec:\n${commitments1.specs2String}")
@@ -983,7 +983,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
           log.debug("ignoring CMD_SIGN (nothing to sign)")
           stay
         case Right(_) =>
-          Try(Commitments.sendCommit(d.commitments, keyManager)) match {
+          Try(d.commitments.sendCommit(keyManager)) match {
             case Success((commitments1, commit)) =>
               log.debug(s"sending a new sig, spec:\n${commitments1.specs2String}")
               commitments1.localChanges.signed.collect {
@@ -1006,7 +1006,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       }
 
     case Event(commit: CommitSig, d@DATA_SHUTDOWN(_, localShutdown, remoteShutdown)) =>
-      Try(Commitments.receiveCommit(d.commitments, commit, keyManager)) match {
+      Try(d.commitments.receiveCommit(commit, keyManager)) match {
         case Success((commitments1, revocation)) =>
           // we always reply with a revocation
           log.debug(s"received a new sig:\n${commitments1.specs2String}")
@@ -1033,7 +1033,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
     case Event(revocation: RevokeAndAck, d@DATA_SHUTDOWN(commitments, localShutdown, remoteShutdown)) =>
       // we received a revocation because we sent a signature
       // => all our changes have been acked including the shutdown message
-      Try(Commitments.receiveRevocation(commitments, revocation)) match {
+      Try(commitments.receiveRevocation(revocation)) match {
         case Success((commitments1, forwards)) =>
           cancelTimer(RevocationTimeout.toString)
           log.debug(s"received a new rev, spec:\n${commitments1.specs2String}")

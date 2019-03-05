@@ -26,7 +26,7 @@ import fr.acinq.eclair.transactions._
 import fr.acinq.eclair.wire._
 import fr.acinq.eclair.{Features, Globals, UInt64}
 import fr.acinq.bitcoin._
-import fr.acinq.eclair.channel.Commitments.msg2String
+import fr.acinq.eclair.channel.Commitments.{makeLocalTxs, makeRemoteTxs, msg2String}
 
 import scala.util.{Failure, Success}
 
@@ -346,6 +346,194 @@ trait Commitments {
 
   def remoteHasChanges: Boolean = localChanges.acked.size > 0 || remoteChanges.proposed.size > 0
 
+  def sendCommit(keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, CommitSig) = {
+    remoteNextCommitInfo match {
+      case Right(_) if !localHasChanges =>
+        throw CannotSignWithoutChanges(channelId)
+      case Right(remoteNextPerCommitmentPoint) =>
+        // remote commitment will includes all local changes + remote acked changes
+        val spec = CommitmentSpec.reduce(remoteCommit.spec, remoteChanges.acked, localChanges.proposed)
+        val localPerCommitmentPoint = keyManager.commitmentPoint(localParams.channelKeyPath, localCommit.index + 1)
+        val (remoteCommitTx, htlcTimeoutTxs, htlcSuccessTxs) = makeRemoteTxs(keyManager, remoteCommit.index + 1, localParams, remoteParams, commitInput, remoteNextPerCommitmentPoint, localPerCommitmentPoint, spec)(getContext)
+        val sig = keyManager.sign(remoteCommitTx, keyManager.fundingPublicKey(localParams.channelKeyPath), SIGHASH_ALL)
+
+        val sortedHtlcTxs: Seq[TransactionWithInputInfo] = (htlcTimeoutTxs ++ htlcSuccessTxs).sortBy(_.input.outPoint.index)
+        val htlcSigs = getContext match {
+          case ContextCommitmentV1 => sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), remoteNextPerCommitmentPoint, SIGHASH_ALL))
+          case ContextSimplifiedCommitment => sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), remoteNextPerCommitmentPoint, SIGHASH_SINGLE | SIGHASH_ANYONECANPAY))
+        }
+
+        // NB: IN/OUT htlcs are inverted because this is the remote commit
+        log.info(s"built remote commit number=${remoteCommit.index + 1} htlc_in={} htlc_out={} feeratePerKw=${spec.feeratePerKw} txid=${remoteCommitTx.tx.txid} tx={}", spec.htlcs.filter(_.direction == OUT).map(_.add.id).mkString(","), spec.htlcs.filter(_.direction == IN).map(_.add.id).mkString(","), remoteCommitTx.tx)
+
+        // don't sign if they don't get paid
+        val commitSig = CommitSig(
+          channelId = channelId,
+          signature = sig,
+          htlcSignatures = htlcSigs.toList
+        )
+
+        val commitments1 = this match {
+          case c: CommitmentsV1 => c.copy(
+            remoteNextCommitInfo = Left(WaitingForRevocation(RemoteCommit(remoteCommit.index + 1, spec, remoteCommitTx.tx.txid, remoteNextPerCommitmentPoint), commitSig, localCommit.index)),
+            localChanges = localChanges.copy(proposed = Nil, signed = localChanges.proposed),
+            remoteChanges = remoteChanges.copy(acked = Nil, signed = remoteChanges.acked))
+          case s: SimplifiedCommitment => s.copy(
+            remoteNextCommitInfo = Left(WaitingForRevocation(RemoteCommit(remoteCommit.index + 1, spec, remoteCommitTx.tx.txid, remoteNextPerCommitmentPoint), commitSig, localCommit.index)),
+            localChanges = localChanges.copy(proposed = Nil, signed = localChanges.proposed),
+            remoteChanges = remoteChanges.copy(acked = Nil, signed = remoteChanges.acked))
+        }
+
+        (commitments1, commitSig)
+      case Left(_) =>
+        throw CannotSignBeforeRevocation(channelId)
+    }
+  }
+
+  def receiveCommit(commit: CommitSig, keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, RevokeAndAck) = {
+    // they sent us a signature for *their* view of *our* next commit tx
+    // so in terms of rev.hashes and indexes we have:
+    // ourCommit.index -> our current revocation hash, which is about to become our old revocation hash
+    // ourCommit.index + 1 -> our next revocation hash, used by *them* to build the sig we've just received, and which
+    // is about to become our current revocation hash
+    // ourCommit.index + 2 -> which is about to become our next revocation hash
+    // we will reply to this sig with our old revocation hash preimage (at index) and our next revocation hash (at index + 1)
+    // and will increment our index
+
+    if (!remoteHasChanges)
+      throw CannotSignWithoutChanges(channelId)
+
+    // check that their signature is valid
+    // signatures are now optional in the commit message, and will be sent only if the other party is actually
+    // receiving money i.e its commit tx has one output for them
+
+    val spec = CommitmentSpec.reduce(localCommit.spec, localChanges.acked, remoteChanges.proposed)
+    val localPerCommitmentPoint = keyManager.commitmentPoint(localParams.channelKeyPath, localCommit.index + 1)
+    val remotePerCommitmentPoint = remoteNextCommitInfo match {
+      case Left(_) => remoteCommit.remotePerCommitmentPoint
+      case Right(point) => point
+    }
+
+    val (localCommitTx, htlcTimeoutTxs, htlcSuccessTxs) = makeLocalTxs(keyManager, localCommit.index + 1, localParams, remoteParams, commitInput, localPerCommitmentPoint, remotePerCommitmentPoint, spec)(getContext)
+    val sig = keyManager.sign(localCommitTx, keyManager.fundingPublicKey(localParams.channelKeyPath), SIGHASH_ALL)
+
+    log.info(s"built local commit number=${localCommit.index + 1} htlc_in={} htlc_out={} feeratePerKw=${spec.feeratePerKw} txid=${localCommitTx.tx.txid} tx={}", spec.htlcs.filter(_.direction == IN).map(_.add.id).mkString(","), spec.htlcs.filter(_.direction == OUT).map(_.add.id).mkString(","), localCommitTx.tx)
+
+    // TODO: should we have optional sig? (original comment: this tx will NOT be signed if our output is empty)
+
+    // no need to compute htlc sigs if commit sig doesn't check out
+    val signedCommitTx = Transactions.addSigs(localCommitTx, keyManager.fundingPublicKey(localParams.channelKeyPath).publicKey, remoteParams.fundingPubKey, sig, commit.signature)
+    if (Transactions.checkSpendable(signedCommitTx).isFailure) {
+      throw InvalidCommitmentSignature(channelId, signedCommitTx.tx)
+    }
+
+    val sortedHtlcTxs: Seq[TransactionWithInputInfo] = (htlcTimeoutTxs ++ htlcSuccessTxs).sortBy(_.input.outPoint.index)
+    if (commit.htlcSignatures.size != sortedHtlcTxs.size) {
+      throw HtlcSigCountMismatch(channelId, sortedHtlcTxs.size, commit.htlcSignatures.size)
+    }
+    val htlcSigs = getContext match {
+      case ContextCommitmentV1 => sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), localPerCommitmentPoint, SIGHASH_ALL))
+      case ContextSimplifiedCommitment => sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), localPerCommitmentPoint, SIGHASH_SINGLE | SIGHASH_ANYONECANPAY))
+    }
+    val remoteHtlcPubkey = Generators.derivePubKey(remoteParams.htlcBasepoint, localPerCommitmentPoint)
+    // combine the sigs to make signed txes
+    val htlcTxsAndSigs = (sortedHtlcTxs, htlcSigs, commit.htlcSignatures).zipped.toList.collect {
+      case (htlcTx: HtlcTimeoutTx, localSig, remoteSig) =>
+        if (Transactions.checkSpendable(Transactions.addSigs(htlcTx, localSig, remoteSig)).isFailure) {
+          throw InvalidHtlcSignature(channelId, htlcTx.tx)
+        }
+        HtlcTxAndSigs(htlcTx, localSig, remoteSig)
+      case (htlcTx: HtlcSuccessTx, localSig, remoteSig) if getContext == ContextCommitmentV1 =>
+        // we can't check that htlc-success tx are spendable because we need the payment preimage; thus we only check the remote sig
+        if (Transactions.checkSig(htlcTx, remoteSig, remoteHtlcPubkey, SIGHASH_ALL) == false) {
+          throw InvalidHtlcSignature(channelId, htlcTx.tx)
+        }
+        HtlcTxAndSigs(htlcTx, localSig, remoteSig)
+      case (htlcTx: HtlcSuccessTx, localSig, remoteSig) if getContext == ContextSimplifiedCommitment =>
+        // we can't check that htlc-success tx are spendable because we need the payment preimage; thus we only check the remote sig
+        if (Transactions.checkSig(htlcTx, remoteSig, remoteHtlcPubkey, SIGHASH_SINGLE | SIGHASH_ANYONECANPAY) == false) {
+          throw InvalidHtlcSignature(channelId, htlcTx.tx)
+        }
+        HtlcTxAndSigs(htlcTx, localSig, remoteSig)
+    }
+
+    // we will send our revocation preimage + our next revocation hash
+    val localPerCommitmentSecret = keyManager.commitmentSecret(localParams.channelKeyPath, localCommit.index)
+    val localNextPerCommitmentPoint = keyManager.commitmentPoint(localParams.channelKeyPath, localCommit.index + 2)
+    val revocation = RevokeAndAck(
+      channelId = channelId,
+      perCommitmentSecret = localPerCommitmentSecret,
+      nextPerCommitmentPoint = localNextPerCommitmentPoint
+    )
+
+    // update our commitment data
+    val localCommit1 = LocalCommit(
+      index = localCommit.index + 1,
+      spec,
+      publishableTxs = PublishableTxs(signedCommitTx, htlcTxsAndSigs))
+    val ourChanges1 = localChanges.copy(acked = Nil)
+    val theirChanges1 = remoteChanges.copy(proposed = Nil, acked = remoteChanges.acked ++ remoteChanges.proposed)
+    val commitments1 = this match {
+      case c: CommitmentsV1 => c.copy(localCommit = localCommit1, localChanges = ourChanges1, remoteChanges = theirChanges1)
+      case s: SimplifiedCommitment => s.copy(localCommit = localCommit1, localChanges = ourChanges1, remoteChanges = theirChanges1)
+    }
+
+    (commitments1, revocation)
+  }
+
+
+  def receiveRevocation(revocation: RevokeAndAck): (Commitments, Seq[ForwardMessage]) = {
+
+    // we receive a revocation because we just sent them a sig for their next commit tx
+    remoteNextCommitInfo match {
+      case Left(_) if revocation.perCommitmentSecret.toPoint != remoteCommit.remotePerCommitmentPoint =>
+        throw InvalidRevocation(channelId)
+      case Left(WaitingForRevocation(theirNextCommit, _, _, _)) =>
+        val forwards = remoteChanges.signed collect {
+          // we forward adds downstream only when they have been committed by both sides
+          // it always happen when we receive a revocation, because they send the add, then they sign it, then we sign it
+          case add: UpdateAddHtlc => ForwardAdd(add)
+          // same for fails: we need to make sure that they are in neither commitment before propagating the fail upstream
+          case fail: UpdateFailHtlc =>
+            val origin = originChannels(fail.id)
+            val add = remoteCommit.spec.htlcs.find(p => p.direction == IN && p.add.id == fail.id).map(_.add).get
+            ForwardFail(fail, origin, add)
+          // same as above
+          case fail: UpdateFailMalformedHtlc =>
+            val origin = originChannels(fail.id)
+            val add = remoteCommit.spec.htlcs.find(p => p.direction == IN && p.add.id == fail.id).map(_.add).get
+            ForwardFailMalformed(fail, origin, add)
+        }
+        // the outgoing following htlcs have been completed (fulfilled or failed) when we received this revocation
+        // they have been removed from both local and remote commitment
+        // (since fulfill/fail are sent by remote, they are (1) signed by them, (2) revoked by us, (3) signed by us, (4) revoked by them
+        val completedOutgoingHtlcs = remoteCommit.spec.htlcs.filter(_.direction == IN).map(_.add.id) -- theirNextCommit.spec.htlcs.filter(_.direction == IN).map(_.add.id)
+        // we remove the newly completed htlcs from the origin map
+        val originChannels1 = originChannels -- completedOutgoingHtlcs
+        val commitments1 = this match {
+          case c: CommitmentsV1 => c.copy(
+            localChanges = localChanges.copy(signed = Nil, acked = localChanges.acked ++ localChanges.signed),
+            remoteChanges = remoteChanges.copy(signed = Nil),
+            remoteCommit = theirNextCommit,
+            remoteNextCommitInfo = Right(revocation.nextPerCommitmentPoint),
+            remotePerCommitmentSecrets = remotePerCommitmentSecrets.addHash(revocation.perCommitmentSecret, 0xFFFFFFFFFFFFL - remoteCommit.index),
+            originChannels = originChannels1)
+          case s: SimplifiedCommitment => s.copy(
+            localChanges = localChanges.copy(signed = Nil, acked = localChanges.acked ++ localChanges.signed),
+            remoteChanges = remoteChanges.copy(signed = Nil),
+            remoteCommit = theirNextCommit,
+            remoteNextCommitInfo = Right(revocation.nextPerCommitmentPoint),
+            remotePerCommitmentSecrets = remotePerCommitmentSecrets.addHash(revocation.perCommitmentSecret, 0xFFFFFFFFFFFFL - remoteCommit.index),
+            originChannels = originChannels1)
+        }
+
+        (commitments1, forwards)
+      case Right(_) =>
+        throw UnexpectedRevocation(channelId)
+    }
+  }
+
+
   // get the context for this commitment
   def getContext: CommitmentContext
 
@@ -471,199 +659,6 @@ object Commitments {
   def revocationPreimage(seed: BinaryData, index: Long): BinaryData = ShaChain.shaChainFromSeed(seed, 0xFFFFFFFFFFFFFFFFL - index)
 
   def revocationHash(seed: BinaryData, index: Long): BinaryData = Crypto.sha256(revocationPreimage(seed, index))
-
-  def sendCommit(commitments: Commitments, keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, CommitSig) = {
-    implicit val commitmentContext = commitments.getContext
-
-    import commitments._
-
-    commitments.remoteNextCommitInfo match {
-      case Right(_) if !commitments.localHasChanges =>
-        throw CannotSignWithoutChanges(commitments.channelId)
-      case Right(remoteNextPerCommitmentPoint) =>
-        // remote commitment will includes all local changes + remote acked changes
-        val spec = CommitmentSpec.reduce(remoteCommit.spec, remoteChanges.acked, localChanges.proposed)
-        val localPerCommitmentPoint = keyManager.commitmentPoint(localParams.channelKeyPath, commitments.localCommit.index + 1)
-        val (remoteCommitTx, htlcTimeoutTxs, htlcSuccessTxs) = makeRemoteTxs(keyManager, remoteCommit.index + 1, localParams, remoteParams, commitInput, remoteNextPerCommitmentPoint, localPerCommitmentPoint, spec)
-        val sig = keyManager.sign(remoteCommitTx, keyManager.fundingPublicKey(localParams.channelKeyPath), SIGHASH_ALL)
-
-        val sortedHtlcTxs: Seq[TransactionWithInputInfo] = (htlcTimeoutTxs ++ htlcSuccessTxs).sortBy(_.input.outPoint.index)
-        val htlcSigs = commitmentContext match {
-          case ContextCommitmentV1 => sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), remoteNextPerCommitmentPoint, SIGHASH_ALL))
-          case ContextSimplifiedCommitment => sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), remoteNextPerCommitmentPoint, SIGHASH_SINGLE | SIGHASH_ANYONECANPAY))
-        }
-
-        // NB: IN/OUT htlcs are inverted because this is the remote commit
-        log.info(s"built remote commit number=${remoteCommit.index + 1} htlc_in={} htlc_out={} feeratePerKw=${spec.feeratePerKw} txid=${remoteCommitTx.tx.txid} tx={}", spec.htlcs.filter(_.direction == OUT).map(_.add.id).mkString(","), spec.htlcs.filter(_.direction == IN).map(_.add.id).mkString(","), remoteCommitTx.tx)
-
-        // don't sign if they don't get paid
-        val commitSig = CommitSig(
-          channelId = commitments.channelId,
-          signature = sig,
-          htlcSignatures = htlcSigs.toList
-        )
-
-        val commitments1 = commitments match {
-          case c: CommitmentsV1 => c.copy(
-            remoteNextCommitInfo = Left(WaitingForRevocation(RemoteCommit(remoteCommit.index + 1, spec, remoteCommitTx.tx.txid, remoteNextPerCommitmentPoint), commitSig, commitments.localCommit.index)),
-            localChanges = localChanges.copy(proposed = Nil, signed = localChanges.proposed),
-            remoteChanges = remoteChanges.copy(acked = Nil, signed = remoteChanges.acked))
-          case s: SimplifiedCommitment => s.copy(
-            remoteNextCommitInfo = Left(WaitingForRevocation(RemoteCommit(remoteCommit.index + 1, spec, remoteCommitTx.tx.txid, remoteNextPerCommitmentPoint), commitSig, commitments.localCommit.index)),
-            localChanges = localChanges.copy(proposed = Nil, signed = localChanges.proposed),
-            remoteChanges = remoteChanges.copy(acked = Nil, signed = remoteChanges.acked))
-        }
-
-        (commitments1, commitSig)
-      case Left(_) =>
-        throw CannotSignBeforeRevocation(commitments.channelId)
-    }
-  }
-
-  def receiveCommit(commitments: Commitments, commit: CommitSig, keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, RevokeAndAck) = {
-    implicit val commitmentContext = commitments.getContext
-
-    import commitments._
-    // they sent us a signature for *their* view of *our* next commit tx
-    // so in terms of rev.hashes and indexes we have:
-    // ourCommit.index -> our current revocation hash, which is about to become our old revocation hash
-    // ourCommit.index + 1 -> our next revocation hash, used by *them* to build the sig we've just received, and which
-    // is about to become our current revocation hash
-    // ourCommit.index + 2 -> which is about to become our next revocation hash
-    // we will reply to this sig with our old revocation hash preimage (at index) and our next revocation hash (at index + 1)
-    // and will increment our index
-
-    if (!commitments.remoteHasChanges)
-      throw CannotSignWithoutChanges(commitments.channelId)
-
-    // check that their signature is valid
-    // signatures are now optional in the commit message, and will be sent only if the other party is actually
-    // receiving money i.e its commit tx has one output for them
-
-    val spec = CommitmentSpec.reduce(localCommit.spec, localChanges.acked, remoteChanges.proposed)
-    val localPerCommitmentPoint = keyManager.commitmentPoint(localParams.channelKeyPath, commitments.localCommit.index + 1)
-    val remotePerCommitmentPoint = remoteNextCommitInfo match {
-      case Left(_) => commitments.remoteCommit.remotePerCommitmentPoint
-      case Right(point) => point
-    }
-
-    val (localCommitTx, htlcTimeoutTxs, htlcSuccessTxs) = makeLocalTxs(keyManager, localCommit.index + 1, localParams, remoteParams, commitInput, localPerCommitmentPoint, remotePerCommitmentPoint, spec)
-    val sig = keyManager.sign(localCommitTx, keyManager.fundingPublicKey(localParams.channelKeyPath), SIGHASH_ALL)
-
-    log.info(s"built local commit number=${localCommit.index + 1} htlc_in={} htlc_out={} feeratePerKw=${spec.feeratePerKw} txid=${localCommitTx.tx.txid} tx={}", spec.htlcs.filter(_.direction == IN).map(_.add.id).mkString(","), spec.htlcs.filter(_.direction == OUT).map(_.add.id).mkString(","), localCommitTx.tx)
-
-    // TODO: should we have optional sig? (original comment: this tx will NOT be signed if our output is empty)
-
-    // no need to compute htlc sigs if commit sig doesn't check out
-    val signedCommitTx = Transactions.addSigs(localCommitTx, keyManager.fundingPublicKey(localParams.channelKeyPath).publicKey, remoteParams.fundingPubKey, sig, commit.signature)
-    if (Transactions.checkSpendable(signedCommitTx).isFailure) {
-      throw InvalidCommitmentSignature(commitments.channelId, signedCommitTx.tx)
-    }
-
-    val sortedHtlcTxs: Seq[TransactionWithInputInfo] = (htlcTimeoutTxs ++ htlcSuccessTxs).sortBy(_.input.outPoint.index)
-    if (commit.htlcSignatures.size != sortedHtlcTxs.size) {
-      throw new HtlcSigCountMismatch(commitments.channelId, sortedHtlcTxs.size, commit.htlcSignatures.size)
-    }
-    val htlcSigs = commitmentContext match {
-      case ContextCommitmentV1 => sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), localPerCommitmentPoint, SIGHASH_ALL))
-      case ContextSimplifiedCommitment => sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), localPerCommitmentPoint, SIGHASH_SINGLE | SIGHASH_ANYONECANPAY))
-    }
-    val remoteHtlcPubkey = Generators.derivePubKey(remoteParams.htlcBasepoint, localPerCommitmentPoint)
-    // combine the sigs to make signed txes
-    val htlcTxsAndSigs = (sortedHtlcTxs, htlcSigs, commit.htlcSignatures).zipped.toList.collect {
-      case (htlcTx: HtlcTimeoutTx, localSig, remoteSig) =>
-        if (Transactions.checkSpendable(Transactions.addSigs(htlcTx, localSig, remoteSig)).isFailure) {
-          throw new InvalidHtlcSignature(commitments.channelId, htlcTx.tx)
-        }
-        HtlcTxAndSigs(htlcTx, localSig, remoteSig)
-      case (htlcTx: HtlcSuccessTx, localSig, remoteSig) if commitmentContext == ContextCommitmentV1 =>
-        // we can't check that htlc-success tx are spendable because we need the payment preimage; thus we only check the remote sig
-        if (Transactions.checkSig(htlcTx, remoteSig, remoteHtlcPubkey, SIGHASH_ALL) == false) {
-          throw new InvalidHtlcSignature(commitments.channelId, htlcTx.tx)
-        }
-        HtlcTxAndSigs(htlcTx, localSig, remoteSig)
-      case (htlcTx: HtlcSuccessTx, localSig, remoteSig) if commitmentContext == ContextSimplifiedCommitment =>
-        // we can't check that htlc-success tx are spendable because we need the payment preimage; thus we only check the remote sig
-        if (Transactions.checkSig(htlcTx, remoteSig, remoteHtlcPubkey, SIGHASH_SINGLE | SIGHASH_ANYONECANPAY) == false) {
-          throw new InvalidHtlcSignature(commitments.channelId, htlcTx.tx)
-        }
-        HtlcTxAndSigs(htlcTx, localSig, remoteSig)
-    }
-
-    // we will send our revocation preimage + our next revocation hash
-    val localPerCommitmentSecret = keyManager.commitmentSecret(localParams.channelKeyPath, commitments.localCommit.index)
-    val localNextPerCommitmentPoint = keyManager.commitmentPoint(localParams.channelKeyPath, commitments.localCommit.index + 2)
-    val revocation = RevokeAndAck(
-      channelId = commitments.channelId,
-      perCommitmentSecret = localPerCommitmentSecret,
-      nextPerCommitmentPoint = localNextPerCommitmentPoint
-    )
-
-    // update our commitment data
-    val localCommit1 = LocalCommit(
-      index = localCommit.index + 1,
-      spec,
-      publishableTxs = PublishableTxs(signedCommitTx, htlcTxsAndSigs))
-    val ourChanges1 = localChanges.copy(acked = Nil)
-    val theirChanges1 = remoteChanges.copy(proposed = Nil, acked = remoteChanges.acked ++ remoteChanges.proposed)
-    val commitments1 = commitments match {
-      case c: CommitmentsV1 => c.copy(localCommit = localCommit1, localChanges = ourChanges1, remoteChanges = theirChanges1)
-      case s: SimplifiedCommitment => s.copy(localCommit = localCommit1, localChanges = ourChanges1, remoteChanges = theirChanges1)
-    }
-
-    (commitments1, revocation)
-  }
-
-  def receiveRevocation(commitments: Commitments, revocation: RevokeAndAck): (Commitments, Seq[ForwardMessage]) = {
-    import commitments._
-    // we receive a revocation because we just sent them a sig for their next commit tx
-    remoteNextCommitInfo match {
-      case Left(_) if revocation.perCommitmentSecret.toPoint != remoteCommit.remotePerCommitmentPoint =>
-        throw InvalidRevocation(commitments.channelId)
-      case Left(WaitingForRevocation(theirNextCommit, _, _, _)) =>
-        val forwards = commitments.remoteChanges.signed collect {
-          // we forward adds downstream only when they have been committed by both sides
-          // it always happen when we receive a revocation, because they send the add, then they sign it, then we sign it
-          case add: UpdateAddHtlc => ForwardAdd(add)
-          // same for fails: we need to make sure that they are in neither commitment before propagating the fail upstream
-          case fail: UpdateFailHtlc =>
-            val origin = commitments.originChannels(fail.id)
-            val add = commitments.remoteCommit.spec.htlcs.find(p => p.direction == IN && p.add.id == fail.id).map(_.add).get
-            ForwardFail(fail, origin, add)
-          // same as above
-          case fail: UpdateFailMalformedHtlc =>
-            val origin = commitments.originChannels(fail.id)
-            val add = commitments.remoteCommit.spec.htlcs.find(p => p.direction == IN && p.add.id == fail.id).map(_.add).get
-            ForwardFailMalformed(fail, origin, add)
-        }
-        // the outgoing following htlcs have been completed (fulfilled or failed) when we received this revocation
-        // they have been removed from both local and remote commitment
-        // (since fulfill/fail are sent by remote, they are (1) signed by them, (2) revoked by us, (3) signed by us, (4) revoked by them
-        val completedOutgoingHtlcs = commitments.remoteCommit.spec.htlcs.filter(_.direction == IN).map(_.add.id) -- theirNextCommit.spec.htlcs.filter(_.direction == IN).map(_.add.id)
-        // we remove the newly completed htlcs from the origin map
-        val originChannels1 = commitments.originChannels -- completedOutgoingHtlcs
-        val commitments1 = commitments match {
-          case c: CommitmentsV1 => c.copy(
-            localChanges = localChanges.copy(signed = Nil, acked = localChanges.acked ++ localChanges.signed),
-            remoteChanges = remoteChanges.copy(signed = Nil),
-            remoteCommit = theirNextCommit,
-            remoteNextCommitInfo = Right(revocation.nextPerCommitmentPoint),
-            remotePerCommitmentSecrets = commitments.remotePerCommitmentSecrets.addHash(revocation.perCommitmentSecret, 0xFFFFFFFFFFFFL - commitments.remoteCommit.index),
-            originChannels = originChannels1)
-          case s: SimplifiedCommitment => s.copy(
-            localChanges = localChanges.copy(signed = Nil, acked = localChanges.acked ++ localChanges.signed),
-            remoteChanges = remoteChanges.copy(signed = Nil),
-            remoteCommit = theirNextCommit,
-            remoteNextCommitInfo = Right(revocation.nextPerCommitmentPoint),
-            remotePerCommitmentSecrets = commitments.remotePerCommitmentSecrets.addHash(revocation.perCommitmentSecret, 0xFFFFFFFFFFFFL - commitments.remoteCommit.index),
-            originChannels = originChannels1)
-        }
-
-        (commitments1, forwards)
-      case Right(_) =>
-        throw UnexpectedRevocation(commitments.channelId)
-    }
-  }
 
   def makeLocalTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, localPerCommitmentPoint: Point, remotePerCommitmentPoint: Point, spec: CommitmentSpec)(implicit commitmentContext: CommitmentContext): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx]) = {
     val localDelayedPaymentPubkey = Generators.derivePubKey(keyManager.delayedPaymentPoint(localParams.channelKeyPath).publicKey, localPerCommitmentPoint)
