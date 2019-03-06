@@ -262,7 +262,10 @@ object Helpers {
         case ContextCommitmentV1 => CommitmentV1.makeLocalTxs(keyManager, 0, localParams, remoteParams, commitmentInput, localPerCommitmentPoint, remoteFirstPerCommitmentPoint, localSpec)
         case ContextSimplifiedCommitment => SimplifiedCommitment.makeLocalTxs(keyManager, 0, localParams, remoteParams, commitmentInput, localPerCommitmentPoint, remoteFirstPerCommitmentPoint, localSpec)
       }
-      val (remoteCommitTx, _, _) = Commitments.makeRemoteTxs(keyManager, 0, localParams, remoteParams, commitmentInput, remoteFirstPerCommitmentPoint, localPerCommitmentPoint, remoteSpec)
+      val (remoteCommitTx, _, _) = commitmentContext match {
+        case ContextCommitmentV1 => CommitmentV1.makeRemoteTxs(keyManager, 0, localParams, remoteParams, commitmentInput, remoteFirstPerCommitmentPoint, localPerCommitmentPoint, remoteSpec)
+        case ContextSimplifiedCommitment => SimplifiedCommitment.makeRemoteTxs(keyManager, 0, localParams, remoteParams, commitmentInput, remoteFirstPerCommitmentPoint, localPerCommitmentPoint, remoteSpec)
+      }
 
       (localSpec, localCommitTx, remoteSpec, remoteCommitTx)
     }
@@ -511,10 +514,8 @@ object Helpers {
       import commitments.{commitInput, localParams, remoteParams}
       require(remoteCommit.txid == commitTx.txid, "txid mismatch, provided tx is not the current remote commit tx")
 
-      implicit val commitmentContext = commitments.getContext
-
       val localPerCommitmentPoint = keyManager.commitmentPoint(localParams.channelKeyPath, commitments.localCommit.index.toInt)
-      val (remoteCommitTx, _, _) = Commitments.makeRemoteTxs(keyManager, remoteCommit.index, localParams, remoteParams, commitInput, remoteCommit.remotePerCommitmentPoint, localPerCommitmentPoint, remoteCommit.spec)
+      val (remoteCommitTx, _, _) = commitments.makeRemoteTxs(keyManager, remoteCommit.index, localParams, remoteParams, commitInput, remoteCommit.remotePerCommitmentPoint, localPerCommitmentPoint, remoteCommit.spec)
       require(remoteCommitTx.tx.txid == commitTx.txid, "txid mismatch, cannot recompute the current remote commit tx")
 
       val localHtlcPubkey = Generators.derivePubKey(keyManager.htlcPoint(localParams.channelKeyPath).publicKey, remoteCommit.remotePerCommitmentPoint)

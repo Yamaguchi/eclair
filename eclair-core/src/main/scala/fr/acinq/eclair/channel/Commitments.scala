@@ -361,7 +361,7 @@ trait Commitments {
         // remote commitment will includes all local changes + remote acked changes
         val spec = CommitmentSpec.reduce(remoteCommit.spec, remoteChanges.acked, localChanges.proposed)
         val localPerCommitmentPoint = keyManager.commitmentPoint(localParams.channelKeyPath, localCommit.index + 1)
-        val (remoteCommitTx, htlcTimeoutTxs, htlcSuccessTxs) = makeRemoteTxs(keyManager, remoteCommit.index + 1, localParams, remoteParams, commitInput, remoteNextPerCommitmentPoint, localPerCommitmentPoint, spec)(getContext)
+        val (remoteCommitTx, htlcTimeoutTxs, htlcSuccessTxs) = makeRemoteTxs(keyManager, remoteCommit.index + 1, localParams, remoteParams, commitInput, remoteNextPerCommitmentPoint, localPerCommitmentPoint, spec)
         val sig = keyManager.sign(remoteCommitTx, keyManager.fundingPublicKey(localParams.channelKeyPath), SIGHASH_ALL)
 
         val sortedHtlcTxs: Seq[TransactionWithInputInfo] = (htlcTimeoutTxs ++ htlcSuccessTxs).sortBy(_.input.outPoint.index)
@@ -543,6 +543,8 @@ trait Commitments {
 
   def makeLocalTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, localPerCommitmentPoint: Point, remotePerCommitmentPoint: Point, spec: CommitmentSpec): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx])
 
+  def makeRemoteTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, remotePerCommitmentPoint: Point, localPerCommitmentPoint: Point, spec: CommitmentSpec): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx])
+
   // get the context for this commitment
   def getContext: CommitmentContext
 
@@ -559,24 +561,6 @@ object Commitments {
   def revocationPreimage(seed: BinaryData, index: Long): BinaryData = ShaChain.shaChainFromSeed(seed, 0xFFFFFFFFFFFFFFFFL - index)
 
   def revocationHash(seed: BinaryData, index: Long): BinaryData = Crypto.sha256(revocationPreimage(seed, index))
-
-  def makeRemoteTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, remotePerCommitmentPoint: Point, localPerCommitmentPoint: Point, spec: CommitmentSpec)(implicit commitmentContext: CommitmentContext): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx]) = {
-    val localPaymentPubkey = commitmentContext match {
-      case ContextSimplifiedCommitment => keyManager.paymentPoint(localParams.channelKeyPath).publicKey
-      case ContextCommitmentV1 => Generators.derivePubKey(keyManager.paymentPoint(localParams.channelKeyPath).publicKey, remotePerCommitmentPoint)
-    }
-    val localDelayedPaymentPubkey = Generators.derivePubKey(keyManager.delayedPaymentPoint(localParams.channelKeyPath).publicKey, localPerCommitmentPoint)
-    val localHtlcPubkey = Generators.derivePubKey(keyManager.htlcPoint(localParams.channelKeyPath).publicKey, remotePerCommitmentPoint)
-    val remoteDelayedPaymentPubkey = Generators.derivePubKey(remoteParams.delayedPaymentBasepoint, remotePerCommitmentPoint)
-    val remoteHtlcPubkey = Generators.derivePubKey(remoteParams.htlcBasepoint, remotePerCommitmentPoint)
-    val remoteRevocationPubkey = Generators.revocationPubKey(keyManager.revocationPoint(localParams.channelKeyPath).publicKey, remotePerCommitmentPoint)
-    val commitTx = commitmentContext match {
-      case ContextCommitmentV1 => Transactions.makeCommitmentV1CommitTx(commitmentInput, commitTxNumber, remoteParams.paymentBasepoint, keyManager.paymentPoint(localParams.channelKeyPath).publicKey, !localParams.isFunder, Satoshi(remoteParams.dustLimitSatoshis), remoteRevocationPubkey, localParams.toSelfDelay, remoteDelayedPaymentPubkey, localPaymentPubkey, remoteHtlcPubkey, localHtlcPubkey, localDelayedPaymentPubkey, spec)
-      case ContextSimplifiedCommitment => Transactions.makeSimplifiedCommitTx(commitmentInput, commitTxNumber, remoteParams.paymentBasepoint, keyManager.paymentPoint(localParams.channelKeyPath).publicKey, !localParams.isFunder, Satoshi(remoteParams.dustLimitSatoshis), remoteRevocationPubkey, localParams.toSelfDelay, remoteDelayedPaymentPubkey, localPaymentPubkey, remoteHtlcPubkey, localHtlcPubkey, localDelayedPaymentPubkey, spec)
-    }
-    val (htlcTimeoutTxs, htlcSuccessTxs) = Transactions.makeHtlcTxs(commitTx.tx, Satoshi(remoteParams.dustLimitSatoshis), remoteRevocationPubkey, localParams.toSelfDelay, remoteDelayedPaymentPubkey, remoteHtlcPubkey, localHtlcPubkey, spec)
-    (commitTx, htlcTimeoutTxs, htlcSuccessTxs)
-  }
 
   def msg2String(msg: LightningMessage): String = msg match {
     case u: UpdateAddHtlc => s"add-${u.id}"

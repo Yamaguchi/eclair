@@ -40,6 +40,9 @@ case class SimplifiedCommitment(localParams: LocalParams, remoteParams: RemotePa
     SimplifiedCommitment.makeLocalTxs(keyManager, commitTxNumber, localParams, remoteParams, commitmentInput, localPerCommitmentPoint, remotePerCommitmentPoint, spec)
   }
 
+  override def makeRemoteTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, remotePerCommitmentPoint: Point, localPerCommitmentPoint: Point, spec: CommitmentSpec): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx]) = {
+    SimplifiedCommitment.makeRemoteTxs(keyManager, commitTxNumber, localParams, remoteParams, commitmentInput, remotePerCommitmentPoint, localPerCommitmentPoint, spec)
+  }
 }
 
 object SimplifiedCommitment {
@@ -55,5 +58,18 @@ object SimplifiedCommitment {
     val (htlcTimeoutTxs, htlcSuccessTxs) = Transactions.makeHtlcTxs(commitTx.tx, Satoshi(localParams.dustLimitSatoshis), localRevocationPubkey, remoteParams.toSelfDelay, localDelayedPaymentPubkey, localHtlcPubkey, remoteHtlcPubkey, spec)(ContextSimplifiedCommitment)
     (commitTx, htlcTimeoutTxs, htlcSuccessTxs)
   }
+
+  def makeRemoteTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, remotePerCommitmentPoint: Point, localPerCommitmentPoint: Point, spec: CommitmentSpec): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx]) = {
+    val localPaymentPubkey = keyManager.paymentPoint(localParams.channelKeyPath).publicKey
+    val localDelayedPaymentPubkey = Generators.derivePubKey(keyManager.delayedPaymentPoint(localParams.channelKeyPath).publicKey, localPerCommitmentPoint)
+    val localHtlcPubkey = Generators.derivePubKey(keyManager.htlcPoint(localParams.channelKeyPath).publicKey, remotePerCommitmentPoint)
+    val remoteDelayedPaymentPubkey = Generators.derivePubKey(remoteParams.delayedPaymentBasepoint, remotePerCommitmentPoint)
+    val remoteHtlcPubkey = Generators.derivePubKey(remoteParams.htlcBasepoint, remotePerCommitmentPoint)
+    val remoteRevocationPubkey = Generators.revocationPubKey(keyManager.revocationPoint(localParams.channelKeyPath).publicKey, remotePerCommitmentPoint)
+    val commitTx = Transactions.makeSimplifiedCommitTx(commitmentInput, commitTxNumber, remoteParams.paymentBasepoint, keyManager.paymentPoint(localParams.channelKeyPath).publicKey, !localParams.isFunder, Satoshi(remoteParams.dustLimitSatoshis), remoteRevocationPubkey, localParams.toSelfDelay, remoteDelayedPaymentPubkey, localPaymentPubkey, remoteHtlcPubkey, localHtlcPubkey, localDelayedPaymentPubkey, spec)
+    val (htlcTimeoutTxs, htlcSuccessTxs) = Transactions.makeHtlcTxs(commitTx.tx, Satoshi(remoteParams.dustLimitSatoshis), remoteRevocationPubkey, localParams.toSelfDelay, remoteDelayedPaymentPubkey, remoteHtlcPubkey, localHtlcPubkey, spec)(ContextSimplifiedCommitment)
+    (commitTx, htlcTimeoutTxs, htlcSuccessTxs)
+  }
+
 
 }
