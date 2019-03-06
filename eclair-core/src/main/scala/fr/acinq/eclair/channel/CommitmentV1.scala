@@ -8,7 +8,7 @@ import fr.acinq.eclair.Globals
 import fr.acinq.eclair.crypto.{Generators, KeyManager, ShaChain}
 import fr.acinq.eclair.payment.Origin
 import fr.acinq.eclair.transactions.{CommitmentSpec, Transactions}
-import fr.acinq.eclair.transactions.Transactions.{CommitTx, HtlcSuccessTx, HtlcTimeoutTx, InputInfo}
+import fr.acinq.eclair.transactions.Transactions._
 import fr.acinq.eclair.wire.{CommitSig, RevokeAndAck, UpdateFee, UpdateMessage}
 
 case class CommitmentV1(localParams: LocalParams, remoteParams: RemoteParams,
@@ -40,7 +40,7 @@ case class CommitmentV1(localParams: LocalParams, remoteParams: RemoteParams,
 
     // a node cannot spend pending incoming htlcs, and need to keep funds above the reserve required by the counterparty, after paying the fee
     // we look from remote's point of view, so if local is funder remote doesn't pay the fees
-    val fees = Transactions.commitTxFee(Satoshi(commitments1.remoteParams.dustLimitSatoshis), reduced)(getContext).amount // we update the fee only in NON simplified commitment
+    val fees = commitTxFee(Satoshi(commitments1.remoteParams.dustLimitSatoshis), reduced).amount // we update the fee only in NON simplified commitment
     val missing = reduced.toRemoteMsat / 1000 - commitments1.remoteParams.channelReserveSatoshis - fees
     if (missing < 0) {
       throw CannotAffordFees(channelId, missingSatoshis = -1 * missing, reserveSatoshis = commitments1.localParams.channelReserveSatoshis, feesSatoshis = fees)
@@ -74,7 +74,7 @@ case class CommitmentV1(localParams: LocalParams, remoteParams: RemoteParams,
     val reduced = CommitmentSpec.reduce(commitments1.localCommit.spec, commitments1.localChanges.acked, commitments1.remoteChanges.proposed)
 
     // a node cannot spend pending incoming htlcs, and need to keep funds above the reserve required by the counterparty, after paying the fee
-    val fees = Transactions.commitTxFee(Satoshi(commitments1.remoteParams.dustLimitSatoshis), reduced)(getContext).amount // we update the fee only in NON simplified
+    val fees = commitTxFee(Satoshi(commitments1.remoteParams.dustLimitSatoshis), reduced).amount // we update the fee only in NON simplified
     val missing = reduced.toRemoteMsat / 1000 - commitments1.localParams.channelReserveSatoshis - fees
     if (missing < 0) {
       throw CannotAffordFees(channelId, missingSatoshis = -1 * missing, reserveSatoshis = commitments1.localParams.channelReserveSatoshis, feesSatoshis = fees)
@@ -86,6 +86,9 @@ case class CommitmentV1(localParams: LocalParams, remoteParams: RemoteParams,
   override def receiveCommit(commit: CommitSig, keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, RevokeAndAck) =
     super.receiveCommit(commit, keyManager, htlcSigHashFlag = SIGHASH_ALL)
 
+  override def sendCommit(keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, CommitSig) =
+    super.sendCommit(keyManager, htlcSigHashFlag = SIGHASH_ALL)
+
   override def makeLocalTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, localPerCommitmentPoint: Point, remotePerCommitmentPoint: Point, spec: CommitmentSpec): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx]) = {
     CommitmentV1.makeLocalTxs(keyManager, commitTxNumber, localParams, remoteParams, commitmentInput, localPerCommitmentPoint, remotePerCommitmentPoint, spec)
   }
@@ -93,6 +96,8 @@ case class CommitmentV1(localParams: LocalParams, remoteParams: RemoteParams,
   override def makeRemoteTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, remotePerCommitmentPoint: Point, localPerCommitmentPoint: Point, spec: CommitmentSpec): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx]) = {
     CommitmentV1.makeRemoteTxs(keyManager, commitTxNumber, localParams, remoteParams, commitmentInput, remotePerCommitmentPoint, localPerCommitmentPoint, spec)
   }
+
+  override def commitTxFee(dustLimit: Satoshi, spec: CommitmentSpec): Satoshi = CommitmentV1.commitTxFee(dustLimit, spec)
 }
 
 object CommitmentV1 {
@@ -119,6 +124,12 @@ object CommitmentV1 {
     val commitTx = Transactions.makeCommitmentV1CommitTx(commitmentInput, commitTxNumber, remoteParams.paymentBasepoint, keyManager.paymentPoint(localParams.channelKeyPath).publicKey, !localParams.isFunder, Satoshi(remoteParams.dustLimitSatoshis), remoteRevocationPubkey, localParams.toSelfDelay, remoteDelayedPaymentPubkey, localPaymentPubkey, remoteHtlcPubkey, localHtlcPubkey, localDelayedPaymentPubkey, spec)
     val (htlcTimeoutTxs, htlcSuccessTxs) = Transactions.makeHtlcTxs(commitTx.tx, Satoshi(remoteParams.dustLimitSatoshis), remoteRevocationPubkey, localParams.toSelfDelay, remoteDelayedPaymentPubkey, remoteHtlcPubkey, localHtlcPubkey, spec)(ContextCommitmentV1)
     (commitTx, htlcTimeoutTxs, htlcSuccessTxs)
+  }
+
+  def commitTxFee(dustLimit: Satoshi, spec: CommitmentSpec): Satoshi = {
+    val trimmedOfferedHtlcs = trimOfferedHtlcs(dustLimit, spec)(ContextCommitmentV1)
+    val trimmedReceivedHtlcs = trimReceivedHtlcs(dustLimit, spec)(ContextCommitmentV1)
+    weight2fee(spec.feeratePerKw , commitWeight + 172 * (trimmedOfferedHtlcs.size + trimmedReceivedHtlcs.size))
   }
 
 

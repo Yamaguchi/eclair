@@ -144,15 +144,6 @@ object Transactions {
       .toSeq
   }
 
-  def commitTxFee(dustLimit: Satoshi, spec: CommitmentSpec)(implicit commitmentContext: CommitmentContext): Satoshi = {
-    val trimmedOfferedHtlcs = trimOfferedHtlcs(dustLimit, spec)
-    val trimmedReceivedHtlcs = trimReceivedHtlcs(dustLimit, spec)
-    commitmentContext match {
-      case ContextCommitmentV1 => weight2fee(spec.feeratePerKw , commitWeight + 172 * (trimmedOfferedHtlcs.size + trimmedReceivedHtlcs.size))
-      case ContextSimplifiedCommitment => weight2fee(simplifiedFeerateKw , simplifiedCommitWeight + 172 * (trimmedOfferedHtlcs.size + trimmedReceivedHtlcs.size))  // simplified commitment has an hardcoded feerate
-    }
-  }
-
   /**
     *
     * @param commitTxNumber         commit tx number
@@ -200,7 +191,7 @@ object Transactions {
   def decodeTxNumber(sequence: Long, locktime: Long): Long = ((sequence & 0xffffffL) << 24) + (locktime & 0xffffffL)
 
   def makeCommitmentV1CommitTx(commitTxInput: InputInfo, commitTxNumber: Long, localPaymentBasePoint: Point, remotePaymentBasePoint: Point, localIsFunder: Boolean, localDustLimit: Satoshi, localRevocationPubkey: PublicKey, toLocalDelay: Int, localDelayedPaymentPubkey: PublicKey, remotePaymentPubkey: PublicKey, localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, remoteDelayedPaymentPubkey: PublicKey, spec: CommitmentSpec): CommitTx = {
-      val commitFee = commitTxFee(localDustLimit, spec)(ContextCommitmentV1)
+      val commitFee = CommitmentV1.commitTxFee(localDustLimit, spec)
 
       val (toLocalAmount: Satoshi, toRemoteAmount: Satoshi) = if (localIsFunder) {
         (millisatoshi2satoshi(MilliSatoshi(spec.toLocalMsat)) - commitFee, millisatoshi2satoshi(MilliSatoshi(spec.toRemoteMsat)))
@@ -228,7 +219,7 @@ object Transactions {
   }
 
   def makeSimplifiedCommitTx(commitTxInput: InputInfo, commitTxNumber: Long, localPaymentBasePoint: Point, remotePaymentBasePoint: Point, localIsFunder: Boolean, localDustLimit: Satoshi, localRevocationPubkey: PublicKey, toLocalDelay: Int, localDelayedPaymentPubkey: PublicKey, remotePaymentPubkey: PublicKey, localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, remoteDelayedPaymentPubkey: PublicKey, spec: CommitmentSpec): CommitTx = {
-    val commitFee = commitTxFee(localDustLimit, spec)(ContextSimplifiedCommitment)
+    val commitFee = SimplifiedCommitment.commitTxFee(localDustLimit, spec)
     val pushMeValueTotal = pushMeValue * 2 // funder pays the total amount of pushme outputs
 
     val (toLocalAmount: Satoshi, toRemoteAmount: Satoshi) = if (localIsFunder) {

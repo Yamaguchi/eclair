@@ -36,6 +36,9 @@ case class SimplifiedCommitment(localParams: LocalParams, remoteParams: RemotePa
   override def receiveCommit(commit: CommitSig, keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, RevokeAndAck) =
     super.receiveCommit(commit, keyManager, htlcSigHashFlag = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY)
 
+  override def sendCommit(keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, CommitSig) =
+    super.sendCommit(keyManager, htlcSigHashFlag = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY)
+
   override def makeLocalTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, localPerCommitmentPoint: Point, remotePerCommitmentPoint: Point, spec: CommitmentSpec): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx]) = {
     SimplifiedCommitment.makeLocalTxs(keyManager, commitTxNumber, localParams, remoteParams, commitmentInput, localPerCommitmentPoint, remotePerCommitmentPoint, spec)
   }
@@ -43,6 +46,8 @@ case class SimplifiedCommitment(localParams: LocalParams, remoteParams: RemotePa
   override def makeRemoteTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, remotePerCommitmentPoint: Point, localPerCommitmentPoint: Point, spec: CommitmentSpec): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx]) = {
     SimplifiedCommitment.makeRemoteTxs(keyManager, commitTxNumber, localParams, remoteParams, commitmentInput, remotePerCommitmentPoint, localPerCommitmentPoint, spec)
   }
+
+  override def commitTxFee(dustLimit: Satoshi, spec: CommitmentSpec): Satoshi = SimplifiedCommitment.commitTxFee(dustLimit, spec)
 }
 
 object SimplifiedCommitment {
@@ -71,5 +76,10 @@ object SimplifiedCommitment {
     (commitTx, htlcTimeoutTxs, htlcSuccessTxs)
   }
 
+  def commitTxFee(dustLimit: Satoshi, spec: CommitmentSpec): Satoshi = {
+    val trimmedOfferedHtlcs = trimOfferedHtlcs(dustLimit, spec)(ContextSimplifiedCommitment)
+    val trimmedReceivedHtlcs = trimReceivedHtlcs(dustLimit, spec)(ContextSimplifiedCommitment)
+    weight2fee(simplifiedFeerateKw , simplifiedCommitWeight + 172 * (trimmedOfferedHtlcs.size + trimmedReceivedHtlcs.size))  // simplified commitment has an hardcoded feerate
+  }
 
 }

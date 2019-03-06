@@ -96,15 +96,11 @@ trait Commitments {
   // TODO subtract the pushMe value from the balance?
   def availableBalanceForSendMsat: Long = {
     val reduced = CommitmentSpec.reduce(remoteCommit.spec, remoteChanges.acked, localChanges.proposed)
-    val feesMsat = if (localParams.isFunder) Transactions.commitTxFee(Satoshi(remoteParams.dustLimitSatoshis), reduced)(commitmentContext = getContext).amount * 1000 else 0
+    val feesMsat = if (localParams.isFunder) commitTxFee(Satoshi(remoteParams.dustLimitSatoshis), reduced).amount * 1000 else 0
     reduced.toRemoteMsat - remoteParams.channelReserveSatoshis * 1000 - feesMsat
   }
 
-  /**
-    *
-    * ADDITIONS
-    *
-    */
+  def commitTxFee(dustLimit: Satoshi, spec: CommitmentSpec): Satoshi
 
   def specs2String: String = {
     s"""(${getContext}) specs:
@@ -191,7 +187,7 @@ trait Commitments {
 
     // a node cannot spend pending incoming htlcs, and need to keep funds above the reserve required by the counterparty, after paying the fee
     // we look from remote's point of view, so if local is funder remote doesn't pay the fees
-    val fees = if (commitments1.localParams.isFunder) Transactions.commitTxFee(Satoshi(commitments1.remoteParams.dustLimitSatoshis), reduced)(getContext).amount else 0
+    val fees = if (commitments1.localParams.isFunder) commitTxFee(Satoshi(commitments1.remoteParams.dustLimitSatoshis), reduced).amount else 0
     val missing = reduced.toRemoteMsat / 1000 - commitments1.remoteParams.channelReserveSatoshis - fees
     if (missing < 0) {
       return Left(InsufficientFunds(channelId, amountMsat = cmd.amountMsat, missingSatoshis = -1 * missing, reserveSatoshis = commitments1.remoteParams.channelReserveSatoshis, feesSatoshis = fees))
@@ -231,7 +227,7 @@ trait Commitments {
     }
 
     // a node cannot spend pending incoming htlcs, and need to keep funds above the reserve required by the counterparty, after paying the fee
-    val fees = if (commitments1.localParams.isFunder) 0 else Transactions.commitTxFee(Satoshi(commitments1.localParams.dustLimitSatoshis), reduced)(getContext).amount
+    val fees = if (commitments1.localParams.isFunder) 0 else commitTxFee(Satoshi(commitments1.localParams.dustLimitSatoshis), reduced).amount
     val missing = reduced.toRemoteMsat / 1000 - commitments1.localParams.channelReserveSatoshis - fees
     if (missing < 0) {
       throw InsufficientFunds(channelId, amountMsat = add.amountMsat, missingSatoshis = -1 * missing, reserveSatoshis = commitments1.localParams.channelReserveSatoshis, feesSatoshis = fees)
@@ -353,7 +349,9 @@ trait Commitments {
 
   def remoteHasChanges: Boolean = localChanges.acked.size > 0 || remoteChanges.proposed.size > 0
 
-  def sendCommit(keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, CommitSig) = {
+  def sendCommit(keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, CommitSig)
+
+  def sendCommit(keyManager: KeyManager, htlcSigHashFlag: Int)(implicit log: LoggingAdapter): (Commitments, CommitSig) = {
     remoteNextCommitInfo match {
       case Right(_) if !localHasChanges =>
         throw CannotSignWithoutChanges(channelId)
@@ -365,11 +363,7 @@ trait Commitments {
         val sig = keyManager.sign(remoteCommitTx, keyManager.fundingPublicKey(localParams.channelKeyPath), SIGHASH_ALL)
 
         val sortedHtlcTxs: Seq[TransactionWithInputInfo] = (htlcTimeoutTxs ++ htlcSuccessTxs).sortBy(_.input.outPoint.index)
-        val htlcSigs = getContext match {
-          case ContextCommitmentV1 => sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), remoteNextPerCommitmentPoint, SIGHASH_ALL))
-          case ContextSimplifiedCommitment => sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), remoteNextPerCommitmentPoint, SIGHASH_SINGLE | SIGHASH_ANYONECANPAY))
-        }
-
+        val htlcSigs = sortedHtlcTxs.map(keyManager.sign(_, keyManager.htlcPoint(localParams.channelKeyPath), remoteNextPerCommitmentPoint, htlcSigHashFlag))
         // NB: IN/OUT htlcs are inverted because this is the remote commit
         log.info(s"built remote commit number=${remoteCommit.index + 1} htlc_in={} htlc_out={} feeratePerKw=${spec.feeratePerKw} txid=${remoteCommitTx.tx.txid} tx={}", spec.htlcs.filter(_.direction == OUT).map(_.add.id).mkString(","), spec.htlcs.filter(_.direction == IN).map(_.add.id).mkString(","), remoteCommitTx.tx)
 

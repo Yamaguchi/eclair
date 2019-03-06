@@ -74,8 +74,8 @@ class TransactionsSpec extends FunSuite with Logging {
     )
     val spec = CommitmentSpec(htlcs, feeratePerKw = 5000, toLocalMsat = 0, toRemoteMsat = 0)
 
-    assert(commitTxFee(Satoshi(546), spec)(ContextSimplifiedCommitment) == expectedSizeSimplifiedCommitment)
-    assert(commitTxFee(Satoshi(546), spec)(ContextCommitmentV1) == expectedSizeCommitmentV1)
+    assert(SimplifiedCommitment.commitTxFee(Satoshi(546), spec) == expectedSizeSimplifiedCommitment)
+    assert(CommitmentV1.commitTxFee(Satoshi(546), spec) == expectedSizeCommitmentV1)
   }
 
   test("check pre-computed transaction weights") {
@@ -251,7 +251,7 @@ class TransactionsSpec extends FunSuite with Logging {
       val commitTransaction = commitTx(commitContext = ContextSimplifiedCommitment)
 
       // local is funder, pays for fees + push_me outputs
-      val expectedToLocalAmount = Satoshi(spec.toLocalMsat / 1000) - Transactions.pushMeValue * 2 - commitTxFee(localDustLimit, spec)(ContextSimplifiedCommitment)
+      val expectedToLocalAmount = Satoshi(spec.toLocalMsat / 1000) - Transactions.pushMeValue * 2 - SimplifiedCommitment.commitTxFee(localDustLimit, spec)
       val expectedToRemoteAmount = Satoshi(spec.toRemoteMsat / 1000)
 
       // there must be 2 push-me outputs
@@ -395,7 +395,7 @@ class TransactionsSpec extends FunSuite with Logging {
 
     tests.foreach(test => {
       logger.info(s"running BOLT 2 test: '${test.name}'")
-      val fee = commitTxFee(test.dustLimit, test.spec)(ContextCommitmentV1)
+      val fee = CommitmentV1.commitTxFee(test.dustLimit, test.spec)
       assert(fee === test.expectedFee)
     })
   }
