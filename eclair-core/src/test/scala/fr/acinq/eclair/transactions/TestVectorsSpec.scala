@@ -183,7 +183,7 @@ class TestVectorsSpec extends FunSuite with Logging {
     logger.info(s"local_feerate_per_kw: ${spec.feeratePerKw}")
 
     val commitTx = {
-      val tx = Transactions.makeCommitTx(
+      val tx = Transactions.makeCommitmentV1CommitTx(
         commitmentInput,
         Local.commitTxNumber, Local.payment_basepoint, Remote.payment_basepoint,
         true, Local.dustLimit,
@@ -191,7 +191,7 @@ class TestVectorsSpec extends FunSuite with Logging {
         Local.delayed_payment_privkey.publicKey, Remote.payment_privkey.publicKey,
         Local.payment_privkey.publicKey, Remote.payment_privkey.publicKey, // note: we have payment_key = htlc_key
         Remote.delayed_payment_pubkey,
-        spec)(ContextCommitmentV1)
+        spec)
 
       val local_sig = Transactions.sign(tx, Local.funding_privkey, SIGHASH_ALL)
       val remote_sig = Transactions.sign(tx, Remote.funding_privkey, SIGHASH_ALL)
@@ -214,7 +214,7 @@ class TestVectorsSpec extends FunSuite with Logging {
     })
 
     {
-      val tx = Transactions.makeCommitTx(
+      val tx = Transactions.makeCommitmentV1CommitTx(
         commitmentInput,
         Local.commitTxNumber, Local.payment_basepoint, Remote.payment_basepoint,
         true, Local.dustLimit,
@@ -222,7 +222,7 @@ class TestVectorsSpec extends FunSuite with Logging {
         Local.delayed_payment_privkey.publicKey, Remote.payment_privkey.publicKey,
         Local.payment_privkey.publicKey, Remote.payment_privkey.publicKey, // note: we have payment_key = htlc_key
         Remote.delayed_payment_pubkey,
-        spec)(ContextCommitmentV1)
+        spec)
 
       val local_sig = Transactions.sign(tx, Local.funding_privkey, SIGHASH_ALL)
       logger.info(s"# local_signature = ${toHexString(local_sig.dropRight(1))}")

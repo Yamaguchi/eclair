@@ -210,7 +210,10 @@ class TransactionsSpec extends FunSuite with Logging {
 
     val commitTxNumber = 0x404142434445L
     def commitTx(commitContext: CommitmentContext = ContextCommitmentV1) = {
-      val txinfo = makeCommitTx(commitInput, commitTxNumber, localPaymentPriv.toPoint, remotePaymentPriv.toPoint, true, localDustLimit, localRevocationPriv.publicKey, toLocalDelay, localDelayedPaymentPriv.publicKey, remotePaymentPriv.publicKey, localHtlcPriv.publicKey, remoteHtlcPriv.publicKey,  remoteDelayedPaymentPriv.publicKey, spec)(commitContext)
+      val txinfo = commitContext match {
+        case ContextCommitmentV1 => makeCommitmentV1CommitTx(commitInput, commitTxNumber, localPaymentPriv.toPoint, remotePaymentPriv.toPoint, true, localDustLimit, localRevocationPriv.publicKey, toLocalDelay, localDelayedPaymentPriv.publicKey, remotePaymentPriv.publicKey, localHtlcPriv.publicKey, remoteHtlcPriv.publicKey,  remoteDelayedPaymentPriv.publicKey, spec)
+        case ContextSimplifiedCommitment => makeSimplifiedCommitTx(commitInput, commitTxNumber, localPaymentPriv.toPoint, remotePaymentPriv.toPoint, true, localDustLimit, localRevocationPriv.publicKey, toLocalDelay, localDelayedPaymentPriv.publicKey, remotePaymentPriv.publicKey, localHtlcPriv.publicKey, remoteHtlcPriv.publicKey,  remoteDelayedPaymentPriv.publicKey, spec)
+      }
       val localSig = Transactions.sign(txinfo, localPaymentPriv, SIGHASH_ALL)
       val remoteSig = Transactions.sign(txinfo, remotePaymentPriv, SIGHASH_ALL)
       Transactions.addSigs(txinfo, localFundingPriv.publicKey, remoteFundingPriv.publicKey, localSig, remoteSig)
@@ -268,17 +271,17 @@ class TransactionsSpec extends FunSuite with Logging {
       assert(toRemoteMainOut.amount == expectedToRemoteAmount)
     }
 
-//    {
-//      // local spends delayed output of htlc1 timeout tx
-//      val claimHtlcDelayed = makeClaimDelayedOutputTx(htlcTimeoutTxs(0).tx, localDustLimit, localRevocationPriv.publicKey, toLocalDelay, localDelayedPaymentPriv.publicKey, finalPubKeyScript, feeratePerKw)(ContextCommitmentV1)
-//      val localSig = sign(claimHtlcDelayed, localDelayedPaymentPriv, SIGHASH_ALL)
-//      val signedTx = addSigs(claimHtlcDelayed, localSig)
-//      assert(checkSpendable(signedTx).isSuccess)
-//      // local can't claim delayed output of htlc3 timeout tx because it is below the dust limit
-//      intercept[RuntimeException] {
-//        makeClaimDelayedOutputTx(htlcTimeoutTxs(1).tx, localDustLimit, localRevocationPriv.publicKey, toLocalDelay, localPaymentPriv.publicKey, finalPubKeyScript, feeratePerKw)(ContextCommitmentV1)
-//      }
-//    }
+    {
+      // local spends delayed output of htlc1 timeout tx
+      val claimHtlcDelayed = makeClaimDelayedOutputTx(htlcTimeoutTxs(0).tx, localDustLimit, localRevocationPriv.publicKey, toLocalDelay, localDelayedPaymentPriv.publicKey, finalPubKeyScript, feeratePerKw)(ContextCommitmentV1)
+      val localSig = sign(claimHtlcDelayed, localDelayedPaymentPriv, SIGHASH_ALL)
+      val signedTx = addSigs(claimHtlcDelayed, localSig)
+      assert(checkSpendable(signedTx).isSuccess)
+      // local can't claim delayed output of htlc3 timeout tx because it is below the dust limit
+      intercept[RuntimeException] {
+        makeClaimDelayedOutputTx(htlcTimeoutTxs(1).tx, localDustLimit, localRevocationPriv.publicKey, toLocalDelay, localPaymentPriv.publicKey, finalPubKeyScript, feeratePerKw)(ContextCommitmentV1)
+      }
+    }
 
     {
       // remote spends local->remote htlc1/htlc3 output directly in case of success
@@ -320,12 +323,6 @@ class TransactionsSpec extends FunSuite with Logging {
       val localSig = sign(claimP2WPKHOutputTx, remotePaymentPriv, SIGHASH_ALL)
       val signedTx = addSigs(claimP2WPKHOutputTx, remotePaymentPriv.publicKey, localSig)
       assert(checkSpendable(signedTx).isSuccess)
-
-      //FIXME
-//      val claimP2WPKHOutputTx1 = makeClaimP2WPKHOutputTx(commitTx(ContextSimplifiedCommitment).tx, localDustLimit, localDelayedPaymentPriv.publicKey, finalPubKeyScript, feeratePerKw, Some(toLocalDelay))(ContextSimplifiedCommitment)
-//      val localSig1 = sign(claimP2WPKHOutputTx1, localDelayedPaymentPriv, SIGHASH_ALL)
-//      val signedTx1 = addSigs(claimP2WPKHOutputTx1, localDelayedPaymentPriv.publicKey, localSig1)
-//      assert(checkSpendable(signedTx1).isSuccess)
     }
 
     {

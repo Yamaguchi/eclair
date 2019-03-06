@@ -199,10 +199,8 @@ object Transactions {
 
   def decodeTxNumber(sequence: Long, locktime: Long): Long = ((sequence & 0xffffffL) << 24) + (locktime & 0xffffffL)
 
-  def makeCommitTx(commitTxInput: InputInfo, commitTxNumber: Long, localPaymentBasePoint: Point, remotePaymentBasePoint: Point, localIsFunder: Boolean, localDustLimit: Satoshi, localRevocationPubkey: PublicKey, toLocalDelay: Int, localDelayedPaymentPubkey: PublicKey, remotePaymentPubkey: PublicKey, localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, remoteDelayedPaymentPubkey: PublicKey, spec: CommitmentSpec)(implicit commitmentContext: CommitmentContext): CommitTx = commitmentContext match {
-
-    case ContextCommitmentV1 =>
-      val commitFee = commitTxFee(localDustLimit, spec)
+  def makeCommitmentV1CommitTx(commitTxInput: InputInfo, commitTxNumber: Long, localPaymentBasePoint: Point, remotePaymentBasePoint: Point, localIsFunder: Boolean, localDustLimit: Satoshi, localRevocationPubkey: PublicKey, toLocalDelay: Int, localDelayedPaymentPubkey: PublicKey, remotePaymentPubkey: PublicKey, localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, remoteDelayedPaymentPubkey: PublicKey, spec: CommitmentSpec): CommitTx = {
+      val commitFee = commitTxFee(localDustLimit, spec)(ContextCommitmentV1)
 
       val (toLocalAmount: Satoshi, toRemoteAmount: Satoshi) = if (localIsFunder) {
         (millisatoshi2satoshi(MilliSatoshi(spec.toLocalMsat)) - commitFee, millisatoshi2satoshi(MilliSatoshi(spec.toRemoteMsat)))
@@ -213,9 +211,9 @@ object Transactions {
       val toLocalDelayedOutput_opt = if (toLocalAmount >= localDustLimit) Some(TxOut(toLocalAmount, pay2wsh(toLocalDelayed(localRevocationPubkey, toLocalDelay, localDelayedPaymentPubkey)))) else None
       val toRemoteOutput_opt = if (toRemoteAmount >= localDustLimit) Some(TxOut(toRemoteAmount, pay2wpkh(remotePaymentPubkey))) else None
 
-      val htlcOfferedOutputs = trimOfferedHtlcs(localDustLimit, spec)
+      val htlcOfferedOutputs = trimOfferedHtlcs(localDustLimit, spec)(ContextCommitmentV1)
         .map(htlc => TxOut(MilliSatoshi(htlc.add.amountMsat), pay2wsh(htlcOffered(localHtlcPubkey, remoteHtlcPubkey, localRevocationPubkey, ripemd160(htlc.add.paymentHash)))))
-      val htlcReceivedOutputs = trimReceivedHtlcs(localDustLimit, spec)
+      val htlcReceivedOutputs = trimReceivedHtlcs(localDustLimit, spec)(ContextCommitmentV1)
         .map(htlc => TxOut(MilliSatoshi(htlc.add.amountMsat), pay2wsh(htlcReceived(localHtlcPubkey, remoteHtlcPubkey, localRevocationPubkey, ripemd160(htlc.add.paymentHash), htlc.add.cltvExpiry))))
 
       val txnumber = obscuredCommitTxNumber(commitTxNumber, localIsFunder, localPaymentBasePoint, remotePaymentBasePoint)
@@ -227,38 +225,38 @@ object Transactions {
         txOut = toLocalDelayedOutput_opt.toSeq ++ toRemoteOutput_opt.toSeq ++ htlcOfferedOutputs ++ htlcReceivedOutputs,
         lockTime = locktime)
       CommitTx(commitTxInput, LexicographicalOrdering.sort(tx))
+  }
 
-    case ContextSimplifiedCommitment =>
-      val commitFee = commitTxFee(localDustLimit, spec)
-      val pushMeValueTotal = pushMeValue * 2 // funder pays the total amount of pushme outputs
+  def makeSimplifiedCommitTx(commitTxInput: InputInfo, commitTxNumber: Long, localPaymentBasePoint: Point, remotePaymentBasePoint: Point, localIsFunder: Boolean, localDustLimit: Satoshi, localRevocationPubkey: PublicKey, toLocalDelay: Int, localDelayedPaymentPubkey: PublicKey, remotePaymentPubkey: PublicKey, localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, remoteDelayedPaymentPubkey: PublicKey, spec: CommitmentSpec): CommitTx = {
+    val commitFee = commitTxFee(localDustLimit, spec)(ContextSimplifiedCommitment)
+    val pushMeValueTotal = pushMeValue * 2 // funder pays the total amount of pushme outputs
 
-      val (toLocalAmount: Satoshi, toRemoteAmount: Satoshi) = if (localIsFunder) {
-        (millisatoshi2satoshi(MilliSatoshi(spec.toLocalMsat)) - commitFee - pushMeValueTotal, millisatoshi2satoshi(MilliSatoshi(spec.toRemoteMsat)))
-      } else {
-        (millisatoshi2satoshi(MilliSatoshi(spec.toLocalMsat)), millisatoshi2satoshi(MilliSatoshi(spec.toRemoteMsat)) - commitFee - pushMeValueTotal)
-      } // NB: we don't care if values are < 0, they will be trimmed if they are < dust limit anyway
+    val (toLocalAmount: Satoshi, toRemoteAmount: Satoshi) = if (localIsFunder) {
+      (millisatoshi2satoshi(MilliSatoshi(spec.toLocalMsat)) - commitFee - pushMeValueTotal, millisatoshi2satoshi(MilliSatoshi(spec.toRemoteMsat)))
+    } else {
+      (millisatoshi2satoshi(MilliSatoshi(spec.toLocalMsat)), millisatoshi2satoshi(MilliSatoshi(spec.toRemoteMsat)) - commitFee - pushMeValueTotal)
+    } // NB: we don't care if values are < 0, they will be trimmed if they are < dust limit anyway
 
-      val toLocalDelayedOutput_opt = if (toLocalAmount < localDustLimit) None else Some(TxOut(toLocalAmount, pay2wsh(toLocalDelayed(localRevocationPubkey, toLocalDelay, localDelayedPaymentPubkey))))
-      val toRemoteOutput_opt = if (toRemoteAmount < localDustLimit) None else Some(TxOut(toRemoteAmount, pay2wsh(toRemoteDelayed(remotePaymentPubkey, toLocalDelay))))
+    val toLocalDelayedOutput_opt = if (toLocalAmount < localDustLimit) None else Some(TxOut(toLocalAmount, pay2wsh(toLocalDelayed(localRevocationPubkey, toLocalDelay, localDelayedPaymentPubkey))))
+    val toRemoteOutput_opt = if (toRemoteAmount < localDustLimit) None else Some(TxOut(toRemoteAmount, pay2wsh(toRemoteDelayed(remotePaymentPubkey, toLocalDelay))))
 
-      val htlcOfferedOutputs = trimOfferedHtlcs(localDustLimit, spec)
-        .map(htlc => TxOut(MilliSatoshi(htlc.add.amountMsat), pay2wsh(htlcOffered(localHtlcPubkey, remoteHtlcPubkey, localRevocationPubkey, ripemd160(htlc.add.paymentHash)))))
-      val htlcReceivedOutputs = trimReceivedHtlcs(localDustLimit, spec)
-        .map(htlc => TxOut(MilliSatoshi(htlc.add.amountMsat), pay2wsh(htlcReceived(localHtlcPubkey, remoteHtlcPubkey, localRevocationPubkey, ripemd160(htlc.add.paymentHash), htlc.add.cltvExpiry))))
+    val htlcOfferedOutputs = trimOfferedHtlcs(localDustLimit, spec)(ContextSimplifiedCommitment)
+      .map(htlc => TxOut(MilliSatoshi(htlc.add.amountMsat), pay2wsh(htlcOffered(localHtlcPubkey, remoteHtlcPubkey, localRevocationPubkey, ripemd160(htlc.add.paymentHash)))))
+    val htlcReceivedOutputs = trimReceivedHtlcs(localDustLimit, spec)(ContextSimplifiedCommitment)
+      .map(htlc => TxOut(MilliSatoshi(htlc.add.amountMsat), pay2wsh(htlcReceived(localHtlcPubkey, remoteHtlcPubkey, localRevocationPubkey, ripemd160(htlc.add.paymentHash), htlc.add.cltvExpiry))))
 
-      val toLocalPushMe_opt = if (toLocalDelayedOutput_opt.isDefined) Some(TxOut(pushMeValue, pay2wsh(pushMeSimplified(localDelayedPaymentPubkey)))) else None
-      val toRemotePushMe_opt = if (toRemoteOutput_opt.isDefined) Some(TxOut(pushMeValue, pay2wsh(pushMeSimplified(remoteDelayedPaymentPubkey)))) else None
+    val toLocalPushMe_opt = if (toLocalDelayedOutput_opt.isDefined) Some(TxOut(pushMeValue, pay2wsh(pushMeSimplified(localDelayedPaymentPubkey)))) else None
+    val toRemotePushMe_opt = if (toRemoteOutput_opt.isDefined) Some(TxOut(pushMeValue, pay2wsh(pushMeSimplified(remoteDelayedPaymentPubkey)))) else None
 
-      val txnumber = obscuredCommitTxNumber(commitTxNumber, localIsFunder, localPaymentBasePoint, remotePaymentBasePoint)
-      val (sequence, locktime) = encodeTxNumber(txnumber)
+    val txnumber = obscuredCommitTxNumber(commitTxNumber, localIsFunder, localPaymentBasePoint, remotePaymentBasePoint)
+    val (sequence, locktime) = encodeTxNumber(txnumber)
 
-      val tx = Transaction(
-        version = 2,
-        txIn = TxIn(commitTxInput.outPoint, Array.emptyByteArray, sequence = sequence) :: Nil,
-        txOut = toLocalDelayedOutput_opt.toSeq ++ toRemoteOutput_opt.toSeq ++ htlcOfferedOutputs ++ htlcReceivedOutputs ++ toLocalPushMe_opt.toSeq ++ toRemotePushMe_opt.toSeq,
-        lockTime = locktime)
-      CommitTx(commitTxInput, LexicographicalOrdering.sort(tx))
-
+    val tx = Transaction(
+      version = 2,
+      txIn = TxIn(commitTxInput.outPoint, Array.emptyByteArray, sequence = sequence) :: Nil,
+      txOut = toLocalDelayedOutput_opt.toSeq ++ toRemoteOutput_opt.toSeq ++ htlcOfferedOutputs ++ htlcReceivedOutputs ++ toLocalPushMe_opt.toSeq ++ toRemotePushMe_opt.toSeq,
+      lockTime = locktime)
+    CommitTx(commitTxInput, LexicographicalOrdering.sort(tx))
   }
 
   def makeHtlcTimeoutTx(commitTx: Transaction, outputsAlreadyUsed: Set[Int], localDustLimit: Satoshi, localRevocationPubkey: PublicKey, toLocalDelay: Int, localDelayedPaymentPubkey: PublicKey, localHtlcPubkey: PublicKey, remoteHtlcPubkey: PublicKey, feeratePerKw: Long, htlc: UpdateAddHtlc): HtlcTimeoutTx = {
@@ -421,20 +419,17 @@ object Transactions {
       txOut = TxOut(Satoshi(0), localFinalScriptPubKey) :: Nil,
       lockTime = 0)
 
-    val claimTx = ClaimDelayedOutputTx(input, tx)
-
-
     // compute weight with a dummy 73 bytes signature (the largest you can get)
-    val weight = Transactions.addSigs(claimTx, BinaryData("00" * 73)).tx.weight()
+    val weight = Transactions.addSigs(ClaimDelayedOutputTx(input, tx), BinaryData("00" * 73)).tx.weight()
     val fee = weight2fee(feeratePerKw, weight)
 
-    val amount = claimTx.input.txOut.amount - fee
+    val amount = input.txOut.amount - fee
     if (amount < localDustLimit) {
       throw AmountBelowDustLimit
     }
 
-    val tx1 = claimTx.tx.copy(txOut = claimTx.tx.txOut(0).copy(amount = amount) :: Nil)
-    ClaimDelayedOutputTx(claimTx.input, tx1)
+    val tx1 = tx.copy(txOut = tx.txOut(0).copy(amount = amount) :: Nil)
+    ClaimDelayedOutputTx(input, tx1)
   }
 
   def makeClaimDelayedOutputPenaltyTx(delayedOutputTx: Transaction, localDustLimit: Satoshi, localRevocationPubkey: PublicKey, toLocalDelay: Int, localDelayedPaymentPubkey: PublicKey, localFinalScriptPubKey: BinaryData, feeratePerKw: Long): ClaimDelayedOutputPenaltyTx = {
