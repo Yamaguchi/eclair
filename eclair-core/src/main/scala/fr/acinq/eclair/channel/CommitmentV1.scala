@@ -1,13 +1,15 @@
 package fr.acinq.eclair.channel
 
+import akka.event.LoggingAdapter
+import fr.acinq.bitcoin._
 import fr.acinq.bitcoin.{BinaryData, Satoshi}
-import fr.acinq.bitcoin.Crypto.Point
+import fr.acinq.bitcoin.Crypto.{Point, PublicKey}
 import fr.acinq.eclair.Globals
-import fr.acinq.eclair.crypto.ShaChain
+import fr.acinq.eclair.crypto.{Generators, KeyManager, ShaChain}
 import fr.acinq.eclair.payment.Origin
 import fr.acinq.eclair.transactions.{CommitmentSpec, Transactions}
-import fr.acinq.eclair.transactions.Transactions.InputInfo
-import fr.acinq.eclair.wire.{UpdateFee, UpdateMessage}
+import fr.acinq.eclair.transactions.Transactions.{CommitTx, HtlcSuccessTx, HtlcTimeoutTx, InputInfo}
+import fr.acinq.eclair.wire.{CommitSig, RevokeAndAck, UpdateFee, UpdateMessage}
 
 case class CommitmentV1(localParams: LocalParams, remoteParams: RemoteParams,
                         channelFlags: Byte,
@@ -80,4 +82,27 @@ case class CommitmentV1(localParams: LocalParams, remoteParams: RemoteParams,
 
     commitments1
   }
+
+  override def receiveCommit(commit: CommitSig, keyManager: KeyManager)(implicit log: LoggingAdapter): (Commitments, RevokeAndAck) =
+    super.receiveCommit(commit, keyManager, htlcSigHashFlag = SIGHASH_ALL)
+
+  override def makeLocalTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, localPerCommitmentPoint: Point, remotePerCommitmentPoint: Point, spec: CommitmentSpec): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx]) = {
+    CommitmentV1.makeLocalTxs(keyManager, commitTxNumber, localParams, remoteParams, commitmentInput, localPerCommitmentPoint, remotePerCommitmentPoint, spec)
+  }
+}
+
+object CommitmentV1 {
+
+  def makeLocalTxs(keyManager: KeyManager, commitTxNumber: Long, localParams: LocalParams, remoteParams: RemoteParams, commitmentInput: InputInfo, localPerCommitmentPoint: Point, remotePerCommitmentPoint: Point, spec: CommitmentSpec): (CommitTx, Seq[HtlcTimeoutTx], Seq[HtlcSuccessTx]) = {
+    val localDelayedPaymentPubkey = Generators.derivePubKey(keyManager.delayedPaymentPoint(localParams.channelKeyPath).publicKey, localPerCommitmentPoint)
+    val localHtlcPubkey = Generators.derivePubKey(keyManager.htlcPoint(localParams.channelKeyPath).publicKey, localPerCommitmentPoint)
+    val remotePaymentPubkey = Generators.derivePubKey(remoteParams.paymentBasepoint, localPerCommitmentPoint)
+    val remoteDelayedPaymentPubkey = Generators.derivePubKey(remoteParams.delayedPaymentBasepoint, remotePerCommitmentPoint)
+    val remoteHtlcPubkey = Generators.derivePubKey(remoteParams.htlcBasepoint, localPerCommitmentPoint)
+    val localRevocationPubkey = Generators.revocationPubKey(remoteParams.revocationBasepoint, localPerCommitmentPoint)
+    val commitTx = Transactions.makeCommitmentV1CommitTx(commitmentInput, commitTxNumber, keyManager.paymentPoint(localParams.channelKeyPath).publicKey, remoteParams.paymentBasepoint, localParams.isFunder, Satoshi(localParams.dustLimitSatoshis), localRevocationPubkey, remoteParams.toSelfDelay, localDelayedPaymentPubkey, remotePaymentPubkey, localHtlcPubkey, remoteHtlcPubkey, remoteDelayedPaymentPubkey, spec)
+    val (htlcTimeoutTxs, htlcSuccessTxs) = Transactions.makeHtlcTxs(commitTx.tx, Satoshi(localParams.dustLimitSatoshis), localRevocationPubkey, remoteParams.toSelfDelay, localDelayedPaymentPubkey, localHtlcPubkey, remoteHtlcPubkey, spec)(ContextCommitmentV1)
+    (commitTx, htlcTimeoutTxs, htlcSuccessTxs)
+  }
+
 }
