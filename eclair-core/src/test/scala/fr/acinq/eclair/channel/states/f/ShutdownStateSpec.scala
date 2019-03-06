@@ -115,7 +115,7 @@ class ShutdownStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     val fulfill = bob2alice.expectMsgType[UpdateFulfillHtlc]
     awaitCond(bob.stateData == initialState.copy(
       commitments = initialState.commitments match {
-        case c: CommitmentsV1 => c.copy(localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fulfill))
+        case c: CommitmentV1 => c.copy(localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fulfill))
         case _: SimplifiedCommitment => ???
       }))
   }
@@ -145,7 +145,7 @@ class ShutdownStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     val fulfill = UpdateFulfillHtlc("00" * 32, 0, "11" * 32)
     sender.send(alice, fulfill)
     awaitCond(alice.stateData.asInstanceOf[DATA_SHUTDOWN].commitments == (initialState.commitments match {
-      case c: CommitmentsV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fulfill))
+      case c: CommitmentV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fulfill))
       case _: SimplifiedCommitment => ???
     }))
   }
@@ -193,7 +193,7 @@ class ShutdownStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(bob.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => ???
-        case c: CommitmentsV1 => c.copy(
+        case c: CommitmentV1 => c.copy(
           localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fail))
       }))
   }
@@ -217,7 +217,7 @@ class ShutdownStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(bob.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => ???
-        case c: CommitmentsV1 => c.copy(
+        case c: CommitmentV1 => c.copy(
           localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fail))
       }))
   }
@@ -248,7 +248,7 @@ class ShutdownStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     sender.send(alice, fail)
     awaitCond(alice.stateData.asInstanceOf[DATA_SHUTDOWN].commitments == (initialState.commitments match {
       case _: SimplifiedCommitment => ???
-      case c: CommitmentsV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fail))
+      case c: CommitmentV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fail))
     }))
   }
 
@@ -276,7 +276,7 @@ class ShutdownStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     sender.send(alice, fail)
     awaitCond(alice.stateData.asInstanceOf[DATA_SHUTDOWN].commitments == (initialState.commitments match {
       case _: SimplifiedCommitment => ???
-      case c: CommitmentsV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fail))
+      case c: CommitmentV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fail))
     }))
   }
 
@@ -522,7 +522,7 @@ class ShutdownStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(alice.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => ???
-        case c: CommitmentsV1 => c.copy(
+        case c: CommitmentV1 => c.copy(
           localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fee))
       }))
   }
@@ -543,7 +543,7 @@ class ShutdownStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     bob ! fee
     awaitCond(bob.stateData == initialData.copy(commitments = initialData.commitments match {
       case _: SimplifiedCommitment => ???
-      case c: CommitmentsV1 => c.copy(remoteChanges = initialData.commitments.remoteChanges.copy(proposed = initialData.commitments.remoteChanges.proposed :+ fee))
+      case c: CommitmentV1 => c.copy(remoteChanges = initialData.commitments.remoteChanges.copy(proposed = initialData.commitments.remoteChanges.proposed :+ fee))
     }))
   }
 

@@ -43,6 +43,14 @@ case class RemoteCommit(index: Long, spec: CommitmentSpec, txid: BinaryData, rem
 case class WaitingForRevocation(nextRemoteCommit: RemoteCommit, sent: CommitSig, sentAfterLocalCommitIndex: Long, reSignAsap: Boolean = false)
 // @formatter:on
 
+/**
+  * about remoteNextCommitInfo:
+  * we either:
+  * - have built and signed their next commit tx with their next revocation hash which can now be discarded
+  * - have their next per-commitment point
+  * So, when we've signed and sent a commit message and are waiting for their revocation message,
+  * theirNextCommitInfo is their next commit tx. The rest of the time, it is their next per-commitment point
+  */
 trait Commitments {
 
   val localParams: LocalParams
@@ -163,7 +171,7 @@ trait Commitments {
     val add = UpdateAddHtlc(channelId, localNextHtlcId, cmd.amountMsat, cmd.paymentHash, cmd.cltvExpiry, cmd.onion)
     // we increment the local htlc index and add an entry to the origins map
     val commitments1 = addLocalProposal(add) match {
-      case c: CommitmentsV1 => c.copy(localNextHtlcId = localNextHtlcId + 1, originChannels = originChannels + (add.id -> origin))
+      case c: CommitmentV1 => c.copy(localNextHtlcId = localNextHtlcId + 1, originChannels = originChannels + (add.id -> origin))
       case s: SimplifiedCommitment => s.copy(localNextHtlcId = localNextHtlcId + 1, originChannels = originChannels + (add.id -> origin))
     }
     // we need to base the next current commitment on the last sig we sent, even if we didn't yet receive their revocation
@@ -208,7 +216,7 @@ trait Commitments {
 
     // let's compute the current commitment *as seen by us* including this change
     val commitments1 = addRemoteProposal(add) match {
-      case c: CommitmentsV1 => c.copy(remoteNextHtlcId = remoteNextHtlcId + 1)
+      case c: CommitmentV1 => c.copy(remoteNextHtlcId = remoteNextHtlcId + 1)
       case s: SimplifiedCommitment => s.copy(remoteNextHtlcId = remoteNextHtlcId + 1)
     }
     val reduced = CommitmentSpec.reduce(commitments1.localCommit.spec, commitments1.localChanges.acked, commitments1.remoteChanges.proposed)
@@ -374,7 +382,7 @@ trait Commitments {
         )
 
         val commitments1 = this match {
-          case c: CommitmentsV1 => c.copy(
+          case c: CommitmentV1 => c.copy(
             remoteNextCommitInfo = Left(WaitingForRevocation(RemoteCommit(remoteCommit.index + 1, spec, remoteCommitTx.tx.txid, remoteNextPerCommitmentPoint), commitSig, localCommit.index)),
             localChanges = localChanges.copy(proposed = Nil, signed = localChanges.proposed),
             remoteChanges = remoteChanges.copy(acked = Nil, signed = remoteChanges.acked))
@@ -474,7 +482,7 @@ trait Commitments {
     val ourChanges1 = localChanges.copy(acked = Nil)
     val theirChanges1 = remoteChanges.copy(proposed = Nil, acked = remoteChanges.acked ++ remoteChanges.proposed)
     val commitments1 = this match {
-      case c: CommitmentsV1 => c.copy(localCommit = localCommit1, localChanges = ourChanges1, remoteChanges = theirChanges1)
+      case c: CommitmentV1 => c.copy(localCommit = localCommit1, localChanges = ourChanges1, remoteChanges = theirChanges1)
       case s: SimplifiedCommitment => s.copy(localCommit = localCommit1, localChanges = ourChanges1, remoteChanges = theirChanges1)
     }
 
@@ -511,7 +519,7 @@ trait Commitments {
         // we remove the newly completed htlcs from the origin map
         val originChannels1 = originChannels -- completedOutgoingHtlcs
         val commitments1 = this match {
-          case c: CommitmentsV1 => c.copy(
+          case c: CommitmentV1 => c.copy(
             localChanges = localChanges.copy(signed = Nil, acked = localChanges.acked ++ localChanges.signed),
             remoteChanges = remoteChanges.copy(signed = Nil),
             remoteCommit = theirNextCommit,
@@ -541,118 +549,9 @@ trait Commitments {
 
 // @formatter: off
 sealed trait CommitmentContext
-
 object ContextCommitmentV1 extends CommitmentContext
-
 object ContextSimplifiedCommitment extends CommitmentContext
-
 // @formatter: on
-
-/**
-  * about remoteNextCommitInfo:
-  * we either:
-  * - have built and signed their next commit tx with their next revocation hash which can now be discarded
-  * - have their next per-commitment point
-  * So, when we've signed and sent a commit message and are waiting for their revocation message,
-  * theirNextCommitInfo is their next commit tx. The rest of the time, it is their next per-commitment point
-  */
-case class CommitmentsV1(localParams: LocalParams, remoteParams: RemoteParams,
-                         channelFlags: Byte,
-                         localCommit: LocalCommit, remoteCommit: RemoteCommit,
-                         localChanges: LocalChanges, remoteChanges: RemoteChanges,
-                         localNextHtlcId: Long, remoteNextHtlcId: Long,
-                         originChannels: Map[Long, Origin], // for outgoing htlcs relayed through us, the id of the previous channel
-                         remoteNextCommitInfo: Either[WaitingForRevocation, Point],
-                         commitInput: InputInfo,
-                         remotePerCommitmentSecrets: ShaChain, channelId: BinaryData) extends Commitments {
-
-  override def getContext: CommitmentContext = ContextCommitmentV1
-
-  override def addLocalProposal(proposal: UpdateMessage): Commitments = this.copy(localChanges = localChanges.copy(proposed = localChanges.proposed :+ proposal))
-
-  override def addRemoteProposal(proposal: UpdateMessage): Commitments = this.copy(remoteChanges = remoteChanges.copy(proposed = remoteChanges.proposed :+ proposal))
-
-  def sendFee(cmd: CMD_UPDATE_FEE): (Commitments, UpdateFee) = {
-    if (!localParams.isFunder) {
-      throw FundeeCannotSendUpdateFee(channelId)
-    }
-
-    // let's compute the current commitment *as seen by them* with this change taken into account
-    val fee = UpdateFee(channelId, cmd.feeratePerKw)
-    // update_fee replace each other, so we can remove previous ones
-    val commitments1 = this.copy(localChanges = localChanges.copy(proposed = localChanges.proposed.filterNot(_.isInstanceOf[UpdateFee]) :+ fee))
-    val reduced = CommitmentSpec.reduce(commitments1.remoteCommit.spec, commitments1.remoteChanges.acked, commitments1.localChanges.proposed)
-
-    // a node cannot spend pending incoming htlcs, and need to keep funds above the reserve required by the counterparty, after paying the fee
-    // we look from remote's point of view, so if local is funder remote doesn't pay the fees
-    val fees = Transactions.commitTxFee(Satoshi(commitments1.remoteParams.dustLimitSatoshis), reduced)(getContext).amount // we update the fee only in NON simplified commitment
-    val missing = reduced.toRemoteMsat / 1000 - commitments1.remoteParams.channelReserveSatoshis - fees
-    if (missing < 0) {
-      throw CannotAffordFees(channelId, missingSatoshis = -1 * missing, reserveSatoshis = commitments1.localParams.channelReserveSatoshis, feesSatoshis = fees)
-    }
-
-    (commitments1, fee)
-  }
-
-  def receiveFee(fee: UpdateFee, maxFeerateMismatch: Double): Commitments = {
-    if (localParams.isFunder) {
-      throw FundeeCannotSendUpdateFee(channelId)
-    }
-
-    if (fee.feeratePerKw < fr.acinq.eclair.MinimumFeeratePerKw) {
-      throw FeerateTooSmall(channelId, remoteFeeratePerKw = fee.feeratePerKw)
-    }
-
-    val localFeeratePerKw = Globals.feeratesPerKw.get.blocks_2
-    if (Helpers.isFeeDiffTooHigh(fee.feeratePerKw, localFeeratePerKw, maxFeerateMismatch)) {
-      throw FeerateTooDifferent(channelId, localFeeratePerKw = localFeeratePerKw, remoteFeeratePerKw = fee.feeratePerKw)
-    }
-
-    // NB: we check that the funder can afford this new fee even if spec allows to do it at next signature
-    // It is easier to do it here because under certain (race) conditions spec allows a lower-than-normal fee to be paid,
-    // and it would be tricky to check if the conditions are met at signing
-    // (it also means that we need to check the fee of the initial commitment tx somewhere)
-
-    // let's compute the current commitment *as seen by us* including this change
-    // update_fee replace each other, so we can remove previous ones
-    val commitments1 = this.copy(remoteChanges = remoteChanges.copy(proposed = remoteChanges.proposed.filterNot(_.isInstanceOf[UpdateFee]) :+ fee))
-    val reduced = CommitmentSpec.reduce(commitments1.localCommit.spec, commitments1.localChanges.acked, commitments1.remoteChanges.proposed)
-
-    // a node cannot spend pending incoming htlcs, and need to keep funds above the reserve required by the counterparty, after paying the fee
-    val fees = Transactions.commitTxFee(Satoshi(commitments1.remoteParams.dustLimitSatoshis), reduced)(getContext).amount // we update the fee only in NON simplified
-    val missing = reduced.toRemoteMsat / 1000 - commitments1.localParams.channelReserveSatoshis - fees
-    if (missing < 0) {
-      throw CannotAffordFees(channelId, missingSatoshis = -1 * missing, reserveSatoshis = commitments1.localParams.channelReserveSatoshis, feesSatoshis = fees)
-    }
-
-    commitments1
-  }
-}
-
-
-case class SimplifiedCommitment(localParams: LocalParams, remoteParams: RemoteParams,
-                                channelFlags: Byte,
-                                localCommit: LocalCommit, remoteCommit: RemoteCommit,
-                                localChanges: LocalChanges, remoteChanges: RemoteChanges,
-                                localNextHtlcId: Long,
-                                remoteNextHtlcId: Long,
-                                originChannels: Map[Long, Origin], // for outgoing htlcs relayed through us, the id of the previous channel
-                                remoteNextCommitInfo: Either[WaitingForRevocation, Point],
-                                commitInput: InputInfo,
-                                remotePerCommitmentSecrets: ShaChain,
-                                channelId: BinaryData) extends Commitments {
-
-
-  override def getContext: CommitmentContext = ContextSimplifiedCommitment
-
-  override def addLocalProposal(proposal: UpdateMessage): Commitments = this.copy(localChanges = localChanges.copy(proposed = localChanges.proposed :+ proposal))
-
-  override def addRemoteProposal(proposal: UpdateMessage): Commitments = this.copy(remoteChanges = remoteChanges.copy(proposed = remoteChanges.proposed :+ proposal))
-
-  override def sendFee(cmd: CMD_UPDATE_FEE): (Commitments, UpdateFee) = throw CannotUpdateFeeWithCommitmentType(channelId)
-
-  override def receiveFee(fee: UpdateFee, maxFeerateMismatch: Double): Commitments = throw CannotUpdateFeeWithCommitmentType(channelId)
-}
 
 object Commitments {
 

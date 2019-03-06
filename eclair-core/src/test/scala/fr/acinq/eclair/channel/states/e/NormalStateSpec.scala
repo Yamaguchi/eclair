@@ -72,7 +72,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(alice.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-        case c: CommitmentsV1 => c.copy(
+        case c: CommitmentV1 => c.copy(
           localNextHtlcId = 1,
           localChanges = initialState.commitments.localChanges.copy(proposed = htlc :: Nil),
           originChannels = Map(0L -> Local(Some(sender.ref)))
@@ -107,7 +107,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(alice.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-        case c: CommitmentsV1 => c.copy(
+        case c: CommitmentV1 => c.copy(
       localNextHtlcId = 1,
       localChanges = initialState.commitments.localChanges.copy(proposed = htlc :: Nil),
       originChannels = Map(0L -> Relayed(originHtlc.channelId, originHtlc.id, originHtlc.amountMsat, htlc.amountMsat))
@@ -305,7 +305,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     bob ! htlc
     awaitCond(bob.stateData == initialData.copy(commitments = initialData.commitments match {
       case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-      case c: CommitmentsV1 => c.copy(remoteChanges = initialData.commitments.remoteChanges.copy(proposed = initialData.commitments.remoteChanges.proposed :+ htlc), remoteNextHtlcId = 1)
+      case c: CommitmentV1 => c.copy(remoteChanges = initialData.commitments.remoteChanges.copy(proposed = initialData.commitments.remoteChanges.proposed :+ htlc), remoteNextHtlcId = 1)
     }))
     // bob won't forward the add before it is cross-signed
     relayerB.expectNoMsg()
@@ -318,7 +318,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     bob ! htlc
     awaitCond(bob.stateData == initialData.copy(commitments = initialData.commitments match {
       case s: SimplifiedCommitment => s.copy(remoteChanges = initialData.commitments.remoteChanges.copy(proposed = initialData.commitments.remoteChanges.proposed :+ htlc), remoteNextHtlcId = 1)
-      case _: CommitmentsV1 => throw new IllegalArgumentException("Shouldn't be here")
+      case _: CommitmentV1 => throw new IllegalArgumentException("Shouldn't be here")
     }))
     // bob won't forward the add before it is cross-signed
     relayerB.expectNoMsg()
@@ -1143,7 +1143,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(bob.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-        case c: CommitmentsV1 => c.copy(localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fulfill))
+        case c: CommitmentV1 => c.copy(localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fulfill))
       }))
   }
 
@@ -1186,7 +1186,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(alice.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-        case c: CommitmentsV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fulfill))
+        case c: CommitmentV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fulfill))
       }))
     // alice immediately propagates the fulfill upstream
     val forward = relayerA.expectMsgType[ForwardFulfill]
@@ -1263,7 +1263,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(bob.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-        case c: CommitmentsV1 => c.copy(
+        case c: CommitmentV1 => c.copy(
           localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fail))
       }))
   }
@@ -1293,7 +1293,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(bob.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-        case c: CommitmentsV1 => c.copy(
+        case c: CommitmentV1 => c.copy(
           localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fail))
       }))
   }
@@ -1331,7 +1331,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(alice.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-        case c: CommitmentsV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fail))
+        case c: CommitmentV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fail))
       }))
     // alice won't forward the fail before it is cross-signed
     relayerA.expectNoMsg()
@@ -1354,7 +1354,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(alice.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-        case c: CommitmentsV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fail))
+        case c: CommitmentV1 => c.copy(remoteChanges = initialState.commitments.remoteChanges.copy(initialState.commitments.remoteChanges.proposed :+ fail))
       }))
     // alice won't forward the fail before it is cross-signed
     relayerA.expectNoMsg()
@@ -1433,7 +1433,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(alice.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-        case c: CommitmentsV1 => c.copy(
+        case c: CommitmentV1 => c.copy(
           localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fee))
       }))
   }
@@ -1451,7 +1451,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     awaitCond(alice.stateData == initialState.copy(
       commitments = initialState.commitments match {
         case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-        case c: CommitmentsV1 => c.copy(
+        case c: CommitmentV1 => c.copy(
           localChanges = initialState.commitments.localChanges.copy(initialState.commitments.localChanges.proposed :+ fee2))
       }))
   }
@@ -1484,7 +1484,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     bob ! fee2
     awaitCond(bob.stateData == initialData.copy(commitments = initialData.commitments match {
       case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-      case c: CommitmentsV1 => c.copy(remoteChanges = initialData.commitments.remoteChanges.copy(proposed = initialData.commitments.remoteChanges.proposed :+ fee2), remoteNextHtlcId = 0)
+      case c: CommitmentV1 => c.copy(remoteChanges = initialData.commitments.remoteChanges.copy(proposed = initialData.commitments.remoteChanges.proposed :+ fee2), remoteNextHtlcId = 0)
     }))
   }
 
@@ -1507,7 +1507,7 @@ class NormalStateSpec extends TestkitBaseClass with StateTestsHelperMethods {
     bob ! fee
     awaitCond(bob.stateData == initialData.copy(commitments = initialData.commitments match {
       case _: SimplifiedCommitment => throw new IllegalArgumentException("Shouldn't be here")
-      case c: CommitmentsV1 => c.copy(remoteChanges = initialData.commitments.remoteChanges.copy(proposed = initialData.commitments.remoteChanges.proposed :+ fee), remoteNextHtlcId = 0)
+      case c: CommitmentV1 => c.copy(remoteChanges = initialData.commitments.remoteChanges.copy(proposed = initialData.commitments.remoteChanges.proposed :+ fee), remoteNextHtlcId = 0)
     }))
   }
 

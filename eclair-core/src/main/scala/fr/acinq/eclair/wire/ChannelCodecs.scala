@@ -234,8 +234,8 @@ object ChannelCodecs extends Logging {
     Attempt.successful(t.asInstanceOf[Commitments])
   }
 
-  private val decodeCommitV1ToGeneric: Commitments => Attempt[CommitmentsV1] = {
-    case c: CommitmentsV1 => Attempt.successful(c)
+  private val decodeCommitV1ToGeneric: Commitments => Attempt[CommitmentV1] = {
+    case c: CommitmentV1 => Attempt.successful(c)
     case _ => Attempt.failure(Err("Wrong type!!"))
   }
 
@@ -258,7 +258,7 @@ object ChannelCodecs extends Logging {
       ("remoteNextCommitInfo" | either(bool, waitingForRevocationCodec, point)) ::
       ("commitInput" | inputInfoCodec) ::
       ("remotePerCommitmentSecrets" | ShaChain.shaChainCodec) ::
-      ("channelId" | binarydata(32))).as[CommitmentsV1].exmap(encodeT[CommitmentsV1], decodeCommitV1ToGeneric)
+      ("channelId" | binarydata(32))).as[CommitmentV1].exmap(encodeT[CommitmentV1], decodeCommitV1ToGeneric)
 
   val simplifiedCommitmentCodec: Codec[Commitments] = (
     ("localParams" | localParamsCodec) ::
@@ -337,7 +337,7 @@ object ChannelCodecs extends Logging {
 
   private val genericStateDataEncoder = new Encoder[HasCommitments] {
     override def encode(value: HasCommitments): Attempt[BitVector] = value.commitments match {
-      case _: CommitmentsV1 => stateDataCodec(commitmentsV1Codec).encode(value).map(bv => BitVector(COMMITMENTv1_VERSION_BYTE) ++ bv)
+      case _: CommitmentV1 => stateDataCodec(commitmentsV1Codec).encode(value).map(bv => BitVector(COMMITMENTv1_VERSION_BYTE) ++ bv)
       case _: SimplifiedCommitment => stateDataCodec(simplifiedCommitmentCodec).encode(value).map(bv => BitVector(COMMITMENT_SIMPLIFIED_VERSION_BYTE) ++ bv)
       case _ => Attempt.failure(Err("Unknown type"))
     }

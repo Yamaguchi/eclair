@@ -366,7 +366,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
               originChannels = Map.empty,
               remoteNextCommitInfo = Right(randomKey.publicKey), // we will receive their next per-commitment point in the next message, so we temporarily put a random byte array,
               commitInput, ShaChain.init, channelId = channelId)
-            case false => CommitmentsV1(localParams, remoteParams, channelFlags,
+            case false => CommitmentV1(localParams, remoteParams, channelFlags,
               LocalCommit(0, localSpec, PublishableTxs(signedLocalCommitTx, Nil)), RemoteCommit(0, remoteSpec, remoteCommitTx.tx.txid, remoteFirstPerCommitmentPoint),
               LocalChanges(Nil, Nil, Nil), RemoteChanges(Nil, Nil, Nil),
               localNextHtlcId = 0L, remoteNextHtlcId = 0L,
@@ -413,7 +413,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
               originChannels = Map.empty,
               remoteNextCommitInfo = Right(randomKey.publicKey), // we will receive their next per-commitment point in the next message, so we temporarily put a random byte array
               commitInput, ShaChain.init, channelId = channelId)
-            case false => CommitmentsV1(localParams, remoteParams, channelFlags,
+            case false => CommitmentV1(localParams, remoteParams, channelFlags,
               LocalCommit(0, localSpec, PublishableTxs(signedLocalCommitTx, Nil)), remoteCommit,
               LocalChanges(Nil, Nil, Nil), RemoteChanges(Nil, Nil, Nil),
               localNextHtlcId = 0L, remoteNextHtlcId = 0L,
@@ -512,7 +512,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
       // we create a channel_update early so that we can use it to send payments through this channel, but it won't be propagated to other nodes since the channel is not yet announced
       val initialChannelUpdate = Announcements.makeChannelUpdate(nodeParams.chainHash, nodeParams.privateKey, remoteNodeId, shortChannelId, nodeParams.expiryDeltaBlocks, d.commitments.remoteParams.htlcMinimumMsat, nodeParams.feeBaseMsat, nodeParams.feeProportionalMillionth, commitments.localCommit.spec.totalFunds, enable = Helpers.aboveReserve(d.commitments))
       val commitments1 = commitments match {
-        case c: CommitmentsV1 => c.copy(remoteNextCommitInfo = Right(nextPerCommitmentPoint))
+        case c: CommitmentV1 => c.copy(remoteNextCommitInfo = Right(nextPerCommitmentPoint))
         case s: SimplifiedCommitment => s.copy(remoteNextCommitInfo = Right(nextPerCommitmentPoint))
       }
 
@@ -671,7 +671,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
         case Left(waitForRevocation) =>
           log.debug(s"already in the process of signing, will sign again as soon as possible")
           val commitments1 = commitments match {
-            case c: CommitmentsV1 => c.copy(remoteNextCommitInfo = Left(waitForRevocation.copy(reSignAsap = true)))
+            case c: CommitmentV1 => c.copy(remoteNextCommitInfo = Left(waitForRevocation.copy(reSignAsap = true)))
             case s: SimplifiedCommitment => s.copy(remoteNextCommitInfo = Left(waitForRevocation.copy(reSignAsap = true)))
           }
           stay using d.copy(commitments = commitments1)
@@ -759,7 +759,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
           case Left(waitForRevocation) =>
             // yes, let's just schedule a new signature ASAP, which will include all pending unsigned htlcs
             val commitments1 = d.commitments match {
-              case c: CommitmentsV1 => c.copy(remoteNextCommitInfo = Left(waitForRevocation.copy(reSignAsap = true)))
+              case c: CommitmentV1 => c.copy(remoteNextCommitInfo = Left(waitForRevocation.copy(reSignAsap = true)))
               case s: SimplifiedCommitment => s.copy(remoteNextCommitInfo = Left(waitForRevocation.copy(reSignAsap = true)))
 
             }
@@ -1000,7 +1000,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
         case Left(waitForRevocation) =>
           log.debug(s"already in the process of signing, will sign again as soon as possible")
           commitments match {
-            case c: CommitmentsV1 => stay using d.copy(commitments = c.copy(remoteNextCommitInfo = Left(waitForRevocation.copy(reSignAsap = true))))
+            case c: CommitmentV1 => stay using d.copy(commitments = c.copy(remoteNextCommitInfo = Left(waitForRevocation.copy(reSignAsap = true))))
             case s: SimplifiedCommitment => stay using d.copy(commitments = s.copy(remoteNextCommitInfo = Left(waitForRevocation.copy(reSignAsap = true))))
           }
       }
@@ -1350,7 +1350,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
 
       val yourLastPerCommitmentSecret = d.commitments.remotePerCommitmentSecrets.lastIndex.flatMap(d.commitments.remotePerCommitmentSecrets.getHash).getOrElse(Sphinx zeroes 32)
       val myCurrentPerCommitmentPoint = d.commitments match {
-        case _: CommitmentsV1 => Some(keyManager.commitmentPoint(d.commitments.localParams.channelKeyPath, d.commitments.localCommit.index))
+        case _: CommitmentV1 => Some(keyManager.commitmentPoint(d.commitments.localParams.channelKeyPath, d.commitments.localCommit.index))
         case _: SimplifiedCommitment => None
       }
 
@@ -1936,7 +1936,7 @@ class Channel(val nodeParams: NodeParams, wallet: EclairWallet, remoteNodeId: Pu
     log.debug(s"discarding proposed OUT: ${d.commitments.localChanges.proposed.map(Commitments.msg2String(_)).mkString(",")}")
     log.debug(s"discarding proposed IN: ${d.commitments.remoteChanges.proposed.map(Commitments.msg2String(_)).mkString(",")}")
     val commitments1 = d.commitments match {
-      case c: CommitmentsV1 => c.copy(
+      case c: CommitmentV1 => c.copy(
         localChanges = d.commitments.localChanges.copy(proposed = Nil),
         remoteChanges = d.commitments.remoteChanges.copy(proposed = Nil),
         localNextHtlcId = d.commitments.localNextHtlcId - d.commitments.localChanges.proposed.collect { case u: UpdateAddHtlc => u }.size,

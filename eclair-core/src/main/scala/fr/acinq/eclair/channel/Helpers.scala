@@ -61,7 +61,7 @@ object Helpers {
     */
   def updateFeatures(data: HasCommitments, localInit: Init, remoteInit: Init): HasCommitments = {
     val commitments1 = data.commitments match {
-      case c: CommitmentsV1 => c.copy(
+      case c: CommitmentV1 => c.copy(
         localParams = data.commitments.localParams.copy(globalFeatures = localInit.globalFeatures, localFeatures = localInit.localFeatures),
         remoteParams = data.commitments.remoteParams.copy(globalFeatures = remoteInit.globalFeatures, localFeatures = remoteInit.localFeatures))
       case _: SimplifiedCommitment => throw new NotImplementedError("Missing impl for simplified_commitment")
@@ -350,7 +350,7 @@ object Helpers {
     }
 
     def firstClosingFee(commitments: Commitments, localScriptPubkey: BinaryData, remoteScriptPubkey: BinaryData)(implicit log: LoggingAdapter): Satoshi = commitments match {
-      case c: CommitmentsV1 =>
+      case c: CommitmentV1 =>
         import commitments._
         // this is just to estimate the weight, it depends on size of the pubkey scripts
         val dummyClosingTx = Transactions.makeClosingTx(commitInput, localScriptPubkey, remoteScriptPubkey, localParams.isFunder, Satoshi(0), Satoshi(0), localCommit.spec)
