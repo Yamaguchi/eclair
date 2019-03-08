@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+service Greeter {
+  // getinfo API
+  rpc GetInfo (GetInfoRequest) returns (GetInfoResponse) { }
+}
+
+// The request message for getting node info.
+message GetInfoRequest { }
+
+// The response message containing the info
+message GetInfoResponse {
+  string nodeId = 1;
+  string alias = 2;
+  int32 port = 3;
+  string chainHash = 4;
+  int32 blockHeight = 5;
+}
