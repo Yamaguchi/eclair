@@ -32,7 +32,7 @@ import com.softwaremill.sttp.okhttp.OkHttpFutureBackend
 import com.typesafe.config.{Config, ConfigFactory}
 import fr.acinq.bitcoin.{BinaryData, Block}
 import fr.acinq.eclair.NodeParams.{BITCOIND, ELECTRUM}
-import fr.acinq.eclair.api.{GetInfoResponse, Service}
+import fr.acinq.eclair.api.{GetInfoResponse, GreeterService, GrpcServer, Service}
 import fr.acinq.eclair.blockchain.bitcoind.rpc.{BasicBitcoinJsonRPCClient, BatchingBitcoinJsonRPCClient, ExtendedBitcoinClient}
 import fr.acinq.eclair.blockchain.bitcoind.zmq.ZMQActor
 import fr.acinq.eclair.blockchain.bitcoind.{BitcoinCoreWallet, ZmqWatcher}
@@ -99,6 +99,9 @@ class Setup(datadir: File,
 
   logger.info(s"nodeid=${nodeParams.nodeId} alias=${nodeParams.alias}")
   logger.info(s"using chain=$chain chainHash=${nodeParams.chainHash}")
+
+  val grpcServer = GrpcServer(port = 9090)
+  grpcServer.start()
 
   val bitcoin = nodeParams.watcherType match {
     case BITCOIND =>
@@ -302,6 +305,7 @@ class Setup(datadir: File,
   } catch {
     case e: TimeoutException =>
       logger.error(messageOnTimeout)
+      e.printStackTrace()
       throw e
   }
 

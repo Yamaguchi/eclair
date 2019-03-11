@@ -1,15 +1,17 @@
 syntax = "proto3";
 
-service Greeter {
+package fr.acinq.eclair;
+
+service RpcService {
   // getinfo API
-  rpc GetInfo (GetInfoRequest) returns (GetInfoResponse) { }
+  rpc GetInfo (RpcGetInfoRequest) returns (RpcGetInfoResponse) { }
 }
 
 // The request message for getting node info.
-message GetInfoRequest { }
+message RpcGetInfoRequest { }
 
 // The response message containing the info
-message GetInfoResponse {
+message RpcGetInfoResponse {
   string nodeId = 1;
   string alias = 2;
   int32 port = 3;
