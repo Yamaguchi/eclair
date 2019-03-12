@@ -10,13 +10,27 @@ import fr.acinq.eclair.{Kit, ShortChannelId}
 import fr.acinq.eclair.io.{NodeURI, Peer}
 import org.json4s.jackson
 import Marshallers._
+import com.github.swagger.akka.SwaggerHttpService
+import com.github.swagger.akka.model.Info
 import de.heikoseeberger.akkahttpjson4s.Json4sSupport
 import fr.acinq.eclair.channel.{CMD_CLOSE, Register}
-import fr.acinq.eclair.wire.NodeAddress
+import io.swagger.v3.oas.annotations.media.{Content, Schema}
+
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
+import io.swagger.v3.oas.annotations.responses.ApiResponse
+import io.swagger.v3.oas.annotations.{Operation, Parameter}
+import javax.ws.rs.{GET, Path}
 
-trait NewService {
+trait NewService extends SwaggerHttpService {
+
+  override val apiClasses: Set[Class[_]] = Set(ConnectRoute.getClass, GetInfoRoute.getClass)
+
+  override val host = "127.0.0.1:9091"
+
+  override val info = Info(description = "Eclair a lightning network implementation")
+
+  override val apiDocsPath = "docs"
 
   def appKit: Kit
 
@@ -54,39 +68,70 @@ trait NewService {
   implicit val shouldWritePretty: ShouldWritePretty = ShouldWritePretty.True
   import Json4sSupport.{marshaller, unmarshaller}
 
-  val connectRoute: Route = path("connect") {
-    parameters("nodeId".as[PublicKey], "address".as[NodeAddress]) { (nodeId, addr) =>
-      connect(s"$nodeId@$addr")
-    } ~ parameters("uri") { uri =>
-      connect(uri)
+//  val connectRoute: Route = path("connect") {
+//    parameters("nodeId".as[PublicKey], "address".as[NodeAddress]) { (nodeId, addr) =>
+//      connect(s"$nodeId@$addr")
+//    } ~ parameters("uri") { uri =>
+//      connect(uri)
+//    }
+//  }
+//
+//  val openRoute: Route = path("open") {
+//    parameters("nodeId".as[PublicKey], "fundingSatoshis".as[Long], "pushMsat".as[Long].?, "fundingFeerateSatByte".as[Long].?, "channelFlags".as[Int].?) {
+//      (nodeId, fundingSatoshis, pushMsat, fundingFeerateSatByte, channelFlags) =>
+//        open(nodeId, fundingSatoshis, pushMsat, fundingFeerateSatByte, channelFlags)
+//    }
+//  }
+//
+//  val closeRoute: Route = path("close") {
+//    parameters("channelId".as[BinaryData](sha256HashUnmarshaller), "scriptPubKey".as[BinaryData](binaryDataUnmarshaller).?) { (channelId: BinaryData, scriptPubKey_opt: Option[BinaryData]) =>
+//      close(channelId.toString(), scriptPubKey_opt)
+//    }
+//  }
+//
+//  val getInfoRoute: Route = path("getinfo") {
+//    complete(getInfoResponse)
+//  }
+
+  @Path("getinfo")
+  object GetInfoRoute extends ApiEndpoint {
+    @GET @Operation(
+      summary = "get info about this node",
+      responses = Array(
+        new ApiResponse(responseCode = "200", description = "Various information about this node", content = Array(new Content(schema = new Schema(implementation = classOf[GetInfoResponse])))),
+        new ApiResponse(responseCode = "500", description = "Internal error"))
+    )
+    override def route: Route = path("getinfo"){
+      get {
+        complete(getInfoResponse)
+      }
     }
   }
 
-  val openRoute: Route = path("open") {
-    parameters("nodeId".as[PublicKey], "fundingSatoshis".as[Long], "pushMsat".as[Long].?, "fundingFeerateSatByte".as[Long].?, "channelFlags".as[Int].?) {
-      (nodeId, fundingSatoshis, pushMsat, fundingFeerateSatByte, channelFlags) =>
-        open(nodeId, fundingSatoshis, pushMsat, fundingFeerateSatByte, channelFlags)
+  @Path("connect")
+  object ConnectRoute extends ApiEndpoint {
+    @GET @Operation(
+      summary = "connect to a node",
+      responses = Array(
+        new ApiResponse(responseCode = "200", description = "Ok if the connection was successful"),
+        new ApiResponse(responseCode = "500", description = "Node unreachable"))
+    )
+    override def route: Route = path("connect") {
+      get {
+        complete("Yeah")
+      }
     }
   }
 
-  val closeRoute: Route = path("close") {
-    parameters("channelId".as[BinaryData](sha256HashUnmarshaller), "scriptPubKey".as[BinaryData](binaryDataUnmarshaller).?) { (channelId: BinaryData, scriptPubKey_opt: Option[BinaryData]) =>
-      close(channelId.toString(), scriptPubKey_opt)
-    }
-  }
-
-  val getInfoRoute: Route = path("getinfo") {
-    complete(getInfoResponse)
-  }
-
-  val motherRoute: Route = {
-    get {
-      connectRoute ~
-      openRoute ~
-      closeRoute ~
-      getInfoRoute
-    }
-  }
+//  val motherRoute: Route = {
+//    get {
+//      ConnectRoute.route ~
+//      connectRoute ~
+//      openRoute ~
+//      closeRoute ~
+//      getInfoRoute
+//    }
+//  }
 
   def connect(uri: String) : Route = {
     complete((appKit.switchboard ? Peer.Connect(NodeURI.parse(uri))).mapTo[String])

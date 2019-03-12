@@ -216,6 +216,16 @@
             <artifactId>guava</artifactId>
             <version>${guava.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.github.swagger-akka-http</groupId>
+            <artifactId>swagger-akka-http_2.11</artifactId>
+            <version>2.0.2</version>
+        </dependency>
+        <dependency>
+            <groupId>javax.ws.rs</groupId>
+            <artifactId>javax.ws.rs-api</artifactId>
+            <version>2.0.1</version>
+        </dependency>
         <!-- TESTS -->
         <dependency>
             <groupId>com.softwaremill.quicklens</groupId>
