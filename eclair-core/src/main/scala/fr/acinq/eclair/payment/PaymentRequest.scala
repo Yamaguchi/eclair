@@ -464,8 +464,7 @@ object PaymentRequest {
     val hrp = s"${pr.prefix}$hramount"
     val data = Codecs.bolt11DataCodec.encode(Bolt11Data(pr.timestamp, pr.tags, pr.signature)).require
     val int5s = eight2fiveCodec.decode(data).require.value
-    val checksum = Bech32.checksum(hrp, int5s)
-    hrp + "1" + (int5s ++ checksum).map(Bech32.pam).mkString
+    Bech32.encode(hrp, int5s.toArray)
   }
 }
 
