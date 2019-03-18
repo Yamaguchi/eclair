@@ -22,10 +22,13 @@ import fr.acinq.eclair.channel.Channel
 import fr.acinq.eclair.router.Graph.GraphStructure.{DirectedGraph, GraphEdge}
 import fr.acinq.eclair.router.Router._
 import fr.acinq.eclair.wire.ChannelUpdate
-
+import grizzled.slf4j.Logging
 import scala.collection.mutable
+import scodec.codecs._
+import scala.collection.JavaConverters._
 
-object Graph {
+
+object Graph extends Logging {
 
   // @formatter:off
   // A compound weight for an edge, weight is obtained with (cost X factor),'cost' contains the actual amount+fees in millisatoshi, 'cltvCumulative' the total CLTV necessary to reach this edge
@@ -173,6 +176,7 @@ object Graph {
     * @param boundaries         a predicate function that can be used to impose limits on the outcome of the search
     * @return
     */
+  import scodec.bits._
 
   def dijkstraShortestPath(g: DirectedGraph,
                            sourceNode: PublicKey,
@@ -246,7 +250,7 @@ object Graph {
             if (newMinimumKnownWeight.weight < neighborCost.weight) {
 
               // update the visiting tree
-              prev.put(neighbor, edge)
+              prev.put(neighbor, edge) // prev.putIfAbsent(neighbor, edge)
 
               // update the queue
               vertexQueue.insert(WeightedNode(neighbor, newMinimumKnownWeight)) // O(1)
@@ -264,14 +268,25 @@ object Graph {
     targetFound match {
       case false => Seq.empty[GraphEdge]
       case true =>
+        var i = 0
         // we traverse the list of "previous" backward building the final list of edges that make the shortest path
         val edgePath = new mutable.ArrayBuffer[GraphEdge](ROUTE_MAX_LENGTH)
         var current = prev.get(sourceNode)
 
+        println(s"prev(source) ${current.desc.shortChannelId}: ${current.desc.a.toString()} --> ${current.desc.b.toString()}")
+        val sndCurrent = prev.get(current.desc.b)
+        println(s"prev(current.b) ${sndCurrent.desc.shortChannelId}: ${sndCurrent.desc.a.toString()} --> ${sndCurrent.desc.b.toString()}")
+        val rdCurrent = prev.get(sndCurrent.desc.b)
+        println(s"prev(sndCurrent.b) ${rdCurrent.desc.shortChannelId}: ${rdCurrent.desc.a.toString()} --> ${rdCurrent.desc.b.toString()}")
+
+
         while (current != null) {
 
+          println(current.desc.shortChannelId+": "+current.desc.a+" --> "+current.desc.b)
           edgePath += current
           current = prev.get(current.desc.b)
+          i = i + 1
+          if(i > 30) throw new IllegalStateException("VERY WRONG!")
         }
 
         edgePath

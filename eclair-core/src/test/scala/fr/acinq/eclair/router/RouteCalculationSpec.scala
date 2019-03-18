@@ -16,17 +16,24 @@
 
 package fr.acinq.eclair.router
 
+import java.io.File
+import java.nio.file.Paths
+import java.sql.DriverManager
+
 import fr.acinq.bitcoin.Crypto.{PrivateKey, PublicKey}
 import fr.acinq.bitcoin.{Block, ByteVector32, Crypto}
+import fr.acinq.eclair.db.sqlite.SqliteNetworkDb
 import fr.acinq.eclair.payment.PaymentRequest.ExtraHop
 import fr.acinq.eclair.router.Graph.GraphStructure.DirectedGraph.graphEdgeToHop
 import fr.acinq.eclair.router.Graph.GraphStructure.{DirectedGraph, GraphEdge}
 import fr.acinq.eclair.router.Graph.{RichWeight, WeightRatios}
+import fr.acinq.eclair.router.Router.getDesc
 import fr.acinq.eclair.wire._
-import fr.acinq.eclair.{Globals, ShortChannelId, randomKey}
+import fr.acinq.eclair.{Globals, NodeParams, ShortChannelId, randomKey}
 import org.scalatest.FunSuite
 import scodec.bits._
 
+import scala.collection.immutable.TreeMap
 import scala.util.{Failure, Success}
 
 /**
@@ -590,6 +597,58 @@ class RouteCalculationSpec extends FunSuite {
     assert(route1.map(hops2Ids) === Success(1 :: 2 :: 4 :: 5 :: Nil))
   }
 
+  test("correctly terminate without finding a solution") {
+
+    val fairlyCheap = PublicKey(hex"03cb7983dc247f9f81a0fa2dfa3ce1c255365f7279c8dd143e086ca333df10e278")
+    val acinq = PublicKey(hex"03864ef025fde8fb587d989186ce6a4a186895ee44a926bfc370e2c366597a3f8f")
+
+    print("Loading graph...")
+
+    val networkDbFile = Paths.get("src/test/resources/network.sqlite").toFile
+    val dbConnection = DriverManager.getConnection(s"jdbc:sqlite:$networkDbFile")
+    val db = new SqliteNetworkDb(dbConnection)
+
+    val channels = db.listChannels()
+    val updates = db.listChannelUpdates()
+    val initChannels = channels.keys.foldLeft(TreeMap.empty[ShortChannelId, ChannelAnnouncement]) { case (m, c) => m + (c.shortChannelId -> c) }
+    val initChannelUpdates = updates.map { u =>
+      val desc = getDesc(u, initChannels(u.shortChannelId))
+      desc -> u
+    }.toMap
+
+    val g = DirectedGraph.makeGraph(initChannelUpdates)
+    println(s"Graph loaded")
+
+    val params = RouteParams(randomize = false, maxFeeBaseMsat = 21000, maxFeePct = 0.03, routeMaxCltv = 1008, routeMaxLength = 6, ratios = Some(
+      WeightRatios(cltvDeltaFactor = 0.15, ageFactor = 0.35, capacityFactor = 0.5)
+    ))
+    val thisNode = PublicKey(hex"036d65409c41ab7380a43448f257809e7496b52bf92057c09c4f300cbd61c50d96")
+    val targetNode = PublicKey(hex"024655b768ef40951b20053a5c4b951606d4d86085d51238f2c67c7dec29c792ca")
+    val amount = 351000
+    // the original invoice from satoshis.place contained route hints, but the bug is reproducible even without them
+//    val invoiceHints = GraphEdge(
+//      desc = ChannelDesc(ShortChannelId("565537x2610x0"), PublicKey(hex"02fa50c72ee1e2eb5f1b6d9c3032080c4c864373c4201dfa2966aa34eee1051f97"), PublicKey(hex"024655b768ef40951b20053a5c4b951606d4d86085d51238f2c67c7dec29c792ca")),
+//      update = ChannelUpdate(
+//        ByteVector.empty,
+//        ByteVector32.Zeroes,
+//        timestamp = 123,
+//        shortChannelId = ShortChannelId("565537x2610x0"),
+//        messageFlags = 0,
+//        channelFlags = 0,
+//        cltvExpiryDelta = 14,
+//        htlcMinimumMsat = 0,
+//        htlcMaximumMsat = None,
+//        feeBaseMsat = 1000,
+//        feeProportionalMillionths = 10
+//      )
+//    )
+
+    Globals.blockCount.set(567634) // simulate mainnet block for heuristic
+    val Success(route) = Router.findRoute(g, thisNode, targetNode, amount, 1, Set.empty, Set.empty, params)
+
+    assert(route.size == 2)
+    assert(route.last.nextNodeId == targetNode)
+  }
 
   /**
     *
